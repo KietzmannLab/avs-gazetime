@@ -242,10 +242,14 @@ if __name__ == '__main__':
     fig.savefig(os.path.join(output_dir, fname), dpi=300)
     # dpi=300
     
+    #save smaller df with just the relevant columns
+    df_mean_embeddings = df_mean_embeddings[['cocoID', 'x', 'y', 'cluster', 'clid', 'color', 'part_of_avs']]
+    
+    
     ########## Plot piechart of the selected scenes that are part of the AVS dataset ##########
 
     # Save the combined dataframe
-    df_mean_embeddings.to_csv(os.path.join(output_dir, "df_mean_embeddings_clustered.csv"), index=False)
+    df_mean_embeddings.to_csv(os.path.join(output_dir, "df_mean_embeddings_clustered_reduced.csv"), index=False)
     print("Saved combined dataframe to CSV.")
     # make a piechart of the selected scenes that are part of the AVS dataset
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(3,3))
