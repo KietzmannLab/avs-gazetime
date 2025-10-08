@@ -83,7 +83,13 @@ def load_memorability_data(subject):
     mem_df = mem_df.dropna(subset=['mem_score'])
 
     print(f"Loaded {len(mem_df)} memorability records for subject {subject}")
-    return mem_df[['subject', 'session', 'sceneID', 'trial', 'start_time', 'duration', 'mem_score']]
+
+    # Include crop_filename for merging with EoR data
+    return_cols = ['subject', 'session', 'sceneID', 'trial', 'start_time', 'duration', 'mem_score']
+    if 'crop_filename' in mem_df.columns:
+        return_cols.append('crop_filename')
+
+    return mem_df[return_cols]
 
 
 def load_eor_data(subject):
@@ -139,7 +145,7 @@ def merge_all_data():
     """Merge saliency, memorability, and ease-of-recognition data."""
     print("=== Loading and merging all data ===")
 
-    # Load saliency data (already includes EoR if available)
+    # Load saliency data
     saliency_file = os.path.join(
         PLOTS_DIR_BEHAV,
         f"fixation_saliency_values_deepgaze_iie_mit1003_radius_{SALIENCY_RADIUS}px.csv"
@@ -152,13 +158,6 @@ def merge_all_data():
     saliency_df = pd.read_csv(saliency_file)
     print(f"Loaded {len(saliency_df)} saliency records")
 
-    # Check if ease-of-recognition is already in the file
-    has_eor = 'ease_fc' in saliency_df.columns
-    if has_eor:
-        print("Ease-of-recognition values found in saliency file")
-    else:
-        print("Warning: Ease-of-recognition values not found in saliency file")
-
     all_data = []
 
     for subject in SUBJECTS:
@@ -169,6 +168,9 @@ def merge_all_data():
         if mem_df is None:
             continue
 
+        # Load EoR data computed from activations HDF5
+        eor_df = load_eor_data(subject)
+
         # Get saliency data for this subject
         sal_df = saliency_df[saliency_df['subject'] == subject].copy()
 
@@ -178,14 +180,37 @@ def merge_all_data():
         # Rename sceneID to scene_id in memorability data for consistency
         mem_df = mem_df.rename(columns={'sceneID': 'scene_id'})
 
-        # Merge saliency (with EoR) and memorability
+        # Merge saliency and memorability
         merged = pd.merge(sal_df, mem_df, on=merge_cols, how='inner', suffixes=('_sal', '_mem'))
 
         print(f"Found {len(merged)} overlapping sal/mem records for subject {subject}")
 
-        if has_eor:
+        # Add EoR data if available
+        if eor_df is not None:
+            # Check if crop_filename is available in merged data
+            if 'crop_filename' in merged.columns:
+                # Direct merge using crop_filename
+                merged = pd.merge(merged, eor_df[['crop_filename', 'eor_entropy']],
+                                on='crop_filename', how='left')
+            else:
+                # Fallback: construct crop_filename from metadata
+                # This may need adjustment based on actual filename format
+                print("  Warning: crop_filename not found, attempting to construct from metadata")
+                merged['crop_filename_temp'] = merged.apply(
+                    lambda row: f"as{subject:02d}_sess{row['session']}_scene_{row['scene_id']}_trial{row['trial']}_time{int(row['start_time'])}.png",
+                    axis=1
+                )
+                merged = pd.merge(merged, eor_df[['crop_filename', 'eor_entropy']],
+                                left_on='crop_filename_temp', right_on='crop_filename',
+                                how='left')
+                merged = merged.drop(columns=['crop_filename_temp', 'crop_filename'], errors='ignore')
+
+            # Rename eor_entropy to ease_fc for consistency with rest of code
+            if 'eor_entropy' in merged.columns:
+                merged = merged.rename(columns={'eor_entropy': 'ease_fc'})
+
             eor_count = merged['ease_fc'].notna().sum()
-            print(f"  {eor_count} records have ease-of-recognition values")
+            print(f"  {eor_count} records have ease-of-recognition values from HDF5")
 
         if len(merged) > 0:
             all_data.append(merged)
@@ -197,6 +222,7 @@ def merge_all_data():
     combined_df = pd.concat(all_data, ignore_index=True)
     print(f"\nCombined dataset: {len(combined_df)} fixations across {len(SUBJECTS)} subjects")
 
+    has_eor = 'ease_fc' in combined_df.columns
     if has_eor:
         total_eor = combined_df['ease_fc'].notna().sum()
         print(f"Total with ease-of-recognition: {total_eor}")
