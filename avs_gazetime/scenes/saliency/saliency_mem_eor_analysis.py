@@ -139,10 +139,25 @@ def merge_all_data():
     """Merge saliency, memorability, and ease-of-recognition data."""
     print("=== Loading and merging all data ===")
 
-    # Load saliency data
-    saliency_df = load_saliency_data()
-    if saliency_df is None:
+    # Load saliency data (already includes EoR if available)
+    saliency_file = os.path.join(
+        PLOTS_DIR_BEHAV,
+        f"fixation_saliency_values_deepgaze_iie_mit1003_radius_{SALIENCY_RADIUS}px.csv"
+    )
+
+    if not os.path.exists(saliency_file):
+        print(f"Error: Saliency file not found: {saliency_file}")
         return None
+
+    saliency_df = pd.read_csv(saliency_file)
+    print(f"Loaded {len(saliency_df)} saliency records")
+
+    # Check if ease-of-recognition is already in the file
+    has_eor = 'ease_fc' in saliency_df.columns
+    if has_eor:
+        print("Ease-of-recognition values found in saliency file")
+    else:
+        print("Warning: Ease-of-recognition values not found in saliency file")
 
     all_data = []
 
@@ -154,44 +169,48 @@ def merge_all_data():
         if mem_df is None:
             continue
 
-        # Load ease-of-recognition data
-        eor_df = load_eor_data(subject)
-        if eor_df is None:
-            continue
-
         # Get saliency data for this subject
         sal_df = saliency_df[saliency_df['subject'] == subject].copy()
-    
+
         # Merge on common columns
         merge_cols = ['subject', 'session', 'scene_id', 'trial', 'start_time']
 
         # Rename sceneID to scene_id in memorability data for consistency
         mem_df = mem_df.rename(columns={'sceneID': 'scene_id'})
 
-        # Merge saliency and memorability
+        # Merge saliency (with EoR) and memorability
         merged = pd.merge(sal_df, mem_df, on=merge_cols, how='inner', suffixes=('_sal', '_mem'))
 
-        # For EoR, we need to match by crop_filename (need to construct this)
-        # This is a simplified approach - in practice you'd need the crop metadata
         print(f"Found {len(merged)} overlapping sal/mem records for subject {subject}")
-    
+
+        if has_eor:
+            eor_count = merged['ease_fc'].notna().sum()
+            print(f"  {eor_count} records have ease-of-recognition values")
+
         if len(merged) > 0:
             all_data.append(merged)
-    
+
     if not all_data:
         print("Error: No overlapping data found across subjects")
         return None
 
     combined_df = pd.concat(all_data, ignore_index=True)
     print(f"\nCombined dataset: {len(combined_df)} fixations across {len(SUBJECTS)} subjects")
-    print(combined_df.head())
-    print(combined_df.columns)
+
+    if has_eor:
+        total_eor = combined_df['ease_fc'].notna().sum()
+        print(f"Total with ease-of-recognition: {total_eor}")
+
+    print(f"Columns: {list(combined_df.columns)}")
     return combined_df
 
 
 def preprocess_data(df):
     """Apply preprocessing to the combined dataset."""
     print("\n=== Preprocessing data ===")
+
+    # Check if EoR is available
+    has_eor = 'ease_fc' in df.columns
 
     # Use memorability duration (more complete dataset)
 
@@ -201,8 +220,13 @@ def preprocess_data(df):
                    (x['duration'] < x['duration'].quantile(0.98))]
     ).reset_index(drop=True)
 
-    # Remove missing values
-    df = df.dropna(subset=['saliency_value', 'mem_score', 'duration'])
+    # Remove missing values for required columns
+    required_cols = ['saliency_value', 'mem_score', 'duration']
+    if has_eor:
+        # Only keep rows with valid EoR values
+        required_cols.append('ease_fc')
+
+    df = df.dropna(subset=required_cols)
 
     # Log transform duration if specified
     if LOG_DURATION:
@@ -212,12 +236,20 @@ def preprocess_data(df):
     if Z_SCORE_FEATURES:
         df['saliency_z'] = (df['saliency_value'] - df['saliency_value'].mean()) / df['saliency_value'].std()
         df['mem_score_z'] = (df['mem_score'] - df['mem_score'].mean()) / df['mem_score'].std()
+        if has_eor:
+            df['eor_z'] = (df['ease_fc'] - df['ease_fc'].mean()) / df['ease_fc'].std()
     else:
         df['saliency_z'] = df['saliency_value']
         df['mem_score_z'] = df['mem_score']
+        if has_eor:
+            df['eor_z'] = df['ease_fc']
 
     print(f"Final dataset: {len(df)} fixations")
     print(f"Subjects: {sorted(df['subject'].unique())}")
+    if has_eor:
+        print(f"Ease-of-recognition available: Yes ({df['eor_z'].notna().sum()} valid values)")
+    else:
+        print("Ease-of-recognition available: No")
 
     return df
 
@@ -227,6 +259,9 @@ def compute_correlations(df):
     print("\n=== Computing correlations ===")
 
     measures = ['duration', 'saliency_z', 'mem_score_z']
+    if 'eor_z' in df.columns:
+        measures.append('eor_z')
+
     correlations = {}
 
     for i, measure1 in enumerate(measures):
@@ -243,6 +278,9 @@ def fit_individual_models(df):
     print("\n=== Individual regression models ===")
 
     predictors = ['saliency_z', 'mem_score_z']
+    if 'eor_z' in df.columns:
+        predictors.append('eor_z')
+
     individual_results = {}
 
     for predictor in predictors:
@@ -284,9 +322,17 @@ def fit_combined_model(df):
     """Fit combined regression model with all predictors."""
     print("\n=== Combined regression model ===")
 
+    has_eor = 'eor_z' in df.columns
+
     try:
         # Mixed-effects model with all predictors
-        formula = "duration ~ saliency_z + mem_score_z"
+        if has_eor:
+            formula = "duration ~ saliency_z + mem_score_z + eor_z"
+            predictor_cols = ['saliency_z', 'mem_score_z', 'eor_z']
+        else:
+            formula = "duration ~ saliency_z + mem_score_z"
+            predictor_cols = ['saliency_z', 'mem_score_z']
+
         model = smf.mixedlm(formula, df, groups=df["subject"])
         result = model.fit()
 
@@ -294,12 +340,12 @@ def fit_combined_model(df):
         print(result.summary())
 
         # Simple R² for comparison
-        X = df[['saliency_z', 'mem_score_z']].values
+        X = df[predictor_cols].values
         y = df['duration'].values
         reg = LinearRegression().fit(X, y)
         combined_r2 = r2_score(y, reg.predict(X))
 
-        return {
+        results_dict = {
             'model': result,
             'r2': combined_r2,
             'saliency_coef': result.params['saliency_z'],
@@ -307,6 +353,12 @@ def fit_combined_model(df):
             'saliency_p': result.pvalues['saliency_z'],
             'mem_p': result.pvalues['mem_score_z']
         }
+
+        if has_eor:
+            results_dict['eor_coef'] = result.params['eor_z']
+            results_dict['eor_p'] = result.pvalues['eor_z']
+
+        return results_dict
 
     except Exception as e:
         print(f"Combined mixed-effects model failed: {e}")
@@ -321,70 +373,165 @@ def unique_variance_analysis(df, individual_results, combined_results):
         print("Cannot perform unique variance analysis without combined model")
         return None
 
+    has_eor = 'eor_z' in df.columns
+
     # R² values
     r2_saliency = individual_results['saliency_z']['r2']
     r2_memory = individual_results['mem_score_z']['r2']
     r2_combined = combined_results['r2']
 
-    # Unique variance contributions
-    unique_saliency = r2_combined - individual_results['mem_score_z']['r2']
-    unique_memory = r2_combined - individual_results['saliency_z']['r2']
-    shared_variance = r2_saliency + r2_memory - r2_combined
-
-    print(f"Individual R² - Saliency: {r2_saliency:.3f}")
-    print(f"Individual R² - Memory: {r2_memory:.3f}")
-    print(f"Combined R²: {r2_combined:.3f}")
-    print(f"Unique variance - Saliency: {unique_saliency:.3f}")
-    print(f"Unique variance - Memory: {unique_memory:.3f}")
-    print(f"Shared variance: {shared_variance:.3f}")
-
-    return {
+    results = {
         'r2_saliency': r2_saliency,
         'r2_memory': r2_memory,
         'r2_combined': r2_combined,
-        'unique_saliency': unique_saliency,
-        'unique_memory': unique_memory,
-        'shared_variance': shared_variance
     }
+
+    print(f"Individual R² - Saliency: {r2_saliency:.3f}")
+    print(f"Individual R² - Memory: {r2_memory:.3f}")
+
+    if has_eor:
+        r2_eor = individual_results['eor_z']['r2']
+        results['r2_eor'] = r2_eor
+        print(f"Individual R² - EoR: {r2_eor:.3f}")
+
+        # For 3-way analysis, fit pairwise combined models
+        try:
+            # Saliency + Memory
+            X_sm = df[['saliency_z', 'mem_score_z']].values
+            y = df['duration'].values
+            reg_sm = LinearRegression().fit(X_sm, y)
+            r2_sal_mem = r2_score(y, reg_sm.predict(X_sm))
+
+            # Saliency + EoR
+            X_se = df[['saliency_z', 'eor_z']].values
+            reg_se = LinearRegression().fit(X_se, y)
+            r2_sal_eor = r2_score(y, reg_se.predict(X_se))
+
+            # Memory + EoR
+            X_me = df[['mem_score_z', 'eor_z']].values
+            reg_me = LinearRegression().fit(X_me, y)
+            r2_mem_eor = r2_score(y, reg_me.predict(X_me))
+
+            # Unique variance (beyond the other two)
+            unique_saliency = r2_combined - r2_mem_eor
+            unique_memory = r2_combined - r2_sal_eor
+            unique_eor = r2_combined - r2_sal_mem
+
+            results['r2_sal_mem'] = r2_sal_mem
+            results['r2_sal_eor'] = r2_sal_eor
+            results['r2_mem_eor'] = r2_mem_eor
+            results['unique_saliency'] = unique_saliency
+            results['unique_memory'] = unique_memory
+            results['unique_eor'] = unique_eor
+
+            print(f"Combined R² (all three): {r2_combined:.3f}")
+            print(f"Combined R² (Sal + Mem): {r2_sal_mem:.3f}")
+            print(f"Combined R² (Sal + EoR): {r2_sal_eor:.3f}")
+            print(f"Combined R² (Mem + EoR): {r2_mem_eor:.3f}")
+            print(f"\nUnique variance - Saliency: {unique_saliency:.3f}")
+            print(f"Unique variance - Memory: {unique_memory:.3f}")
+            print(f"Unique variance - EoR: {unique_eor:.3f}")
+
+        except Exception as e:
+            print(f"Error computing 3-way unique variance: {e}")
+    else:
+        # 2-way analysis (original code)
+        unique_saliency = r2_combined - r2_memory
+        unique_memory = r2_combined - r2_saliency
+        shared_variance = r2_saliency + r2_memory - r2_combined
+
+        results['unique_saliency'] = unique_saliency
+        results['unique_memory'] = unique_memory
+        results['shared_variance'] = shared_variance
+
+        print(f"Combined R²: {r2_combined:.3f}")
+        print(f"Unique variance - Saliency: {unique_saliency:.3f}")
+        print(f"Unique variance - Memory: {unique_memory:.3f}")
+        print(f"Shared variance: {shared_variance:.3f}")
+
+    return results
 
 
 def create_plots(df, output_dir):
     """Create visualization plots."""
     print("\n=== Creating plots ===")
 
-    # Set up plotting
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    has_eor = 'eor_z' in df.columns
 
-    # Correlation matrix
-    corr_data = df[['duration', 'saliency_z', 'mem_score_z']].corr()
-    sns.heatmap(corr_data, annot=True, cmap='coolwarm', center=0,
-                square=True, ax=axes[0,0])
-    axes[0,0].set_title('Correlation Matrix')
+    if has_eor:
+        # Set up plotting (3x2 grid for 3 features)
+        fig, axes = plt.subplots(3, 2, figsize=(14, 16))
 
-    # Saliency vs Duration
-    sns.scatterplot(data=df, x='saliency_z', y='duration', alpha=0.6, ax=axes[0,1])
-    axes[0,1].set_xlabel('Saliency (z-scored)')
-    axes[0,1].set_ylabel('Fixation Duration (ms)')
-    axes[0,1].set_title('Saliency vs Duration')
+        # Correlation matrix
+        corr_data = df[['duration', 'saliency_z', 'mem_score_z', 'eor_z']].corr()
+        sns.heatmap(corr_data, annot=True, cmap='coolwarm', center=0,
+                    square=True, ax=axes[0,0])
+        axes[0,0].set_title('Correlation Matrix')
 
-    # Memory vs Duration
-    sns.scatterplot(data=df, x='mem_score_z', y='duration', alpha=0.6, ax=axes[1,0])
-    axes[1,0].set_xlabel('Memory Score (z-scored)')
-    axes[1,0].set_ylabel('Fixation Duration (ms)')
-    axes[1,0].set_title('Memory vs Duration')
+        # Saliency vs Duration
+        sns.scatterplot(data=df, x='saliency_z', y='duration', alpha=0.4, ax=axes[0,1])
+        axes[0,1].set_xlabel('Saliency (z-scored)')
+        axes[0,1].set_ylabel('Fixation Duration (ms)')
+        axes[0,1].set_title('Saliency vs Duration')
 
-    # Saliency vs Memory
-    sns.scatterplot(data=df, x='saliency_z', y='mem_score_z', alpha=0.6, ax=axes[1,1])
-    axes[1,1].set_xlabel('Saliency (z-scored)')
-    axes[1,1].set_ylabel('Memory Score (z-scored)')
-    axes[1,1].set_title('Saliency vs Memory')
+        # Memory vs Duration
+        sns.scatterplot(data=df, x='mem_score_z', y='duration', alpha=0.4, ax=axes[1,0])
+        axes[1,0].set_xlabel('Memory Score (z-scored)')
+        axes[1,0].set_ylabel('Fixation Duration (ms)')
+        axes[1,0].set_title('Memory vs Duration')
+
+        # EoR vs Duration
+        sns.scatterplot(data=df, x='eor_z', y='duration', alpha=0.4, ax=axes[1,1])
+        axes[1,1].set_xlabel('Ease-of-Recognition (z-scored)')
+        axes[1,1].set_ylabel('Fixation Duration (ms)')
+        axes[1,1].set_title('EoR vs Duration')
+
+        # Saliency vs Memory
+        sns.scatterplot(data=df, x='saliency_z', y='mem_score_z', alpha=0.4, ax=axes[2,0])
+        axes[2,0].set_xlabel('Saliency (z-scored)')
+        axes[2,0].set_ylabel('Memory Score (z-scored)')
+        axes[2,0].set_title('Saliency vs Memory')
+
+        # Saliency vs EoR
+        sns.scatterplot(data=df, x='saliency_z', y='eor_z', alpha=0.4, ax=axes[2,1])
+        axes[2,1].set_xlabel('Saliency (z-scored)')
+        axes[2,1].set_ylabel('Ease-of-Recognition (z-scored)')
+        axes[2,1].set_title('Saliency vs EoR')
+
+    else:
+        # Original 2x2 grid
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+        # Correlation matrix
+        corr_data = df[['duration', 'saliency_z', 'mem_score_z']].corr()
+        sns.heatmap(corr_data, annot=True, cmap='coolwarm', center=0,
+                    square=True, ax=axes[0,0])
+        axes[0,0].set_title('Correlation Matrix')
+
+        # Saliency vs Duration
+        sns.scatterplot(data=df, x='saliency_z', y='duration', alpha=0.6, ax=axes[0,1])
+        axes[0,1].set_xlabel('Saliency (z-scored)')
+        axes[0,1].set_ylabel('Fixation Duration (ms)')
+        axes[0,1].set_title('Saliency vs Duration')
+
+        # Memory vs Duration
+        sns.scatterplot(data=df, x='mem_score_z', y='duration', alpha=0.6, ax=axes[1,0])
+        axes[1,0].set_xlabel('Memory Score (z-scored)')
+        axes[1,0].set_ylabel('Fixation Duration (ms)')
+        axes[1,0].set_title('Memory vs Duration')
+
+        # Saliency vs Memory
+        sns.scatterplot(data=df, x='saliency_z', y='mem_score_z', alpha=0.6, ax=axes[1,1])
+        axes[1,1].set_xlabel('Saliency (z-scored)')
+        axes[1,1].set_ylabel('Memory Score (z-scored)')
+        axes[1,1].set_title('Saliency vs Memory')
 
     plt.tight_layout()
 
     # Save plot
     plot_path = os.path.join(output_dir, 'saliency_mem_eor_analysis.png')
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.close()
 
     print(f"Plot saved to: {plot_path}")
 
@@ -448,10 +595,26 @@ def main():
 
         if unique_variance:
             f.write("\nUNIQUE VARIANCE ANALYSIS:\n")
-            f.write(f"Saliency unique variance: {unique_variance['unique_saliency']:.3f}\n")
-            f.write(f"Memory unique variance: {unique_variance['unique_memory']:.3f}\n")
-            f.write(f"Shared variance: {unique_variance['shared_variance']:.3f}\n")
-            f.write(f"Combined R²: {unique_variance['r2_combined']:.3f}\n")
+            f.write(f"Individual R² - Saliency: {unique_variance['r2_saliency']:.3f}\n")
+            f.write(f"Individual R² - Memory: {unique_variance['r2_memory']:.3f}\n")
+
+            if 'r2_eor' in unique_variance:
+                f.write(f"Individual R² - EoR: {unique_variance['r2_eor']:.3f}\n")
+                f.write(f"\nPairwise Combined R²:\n")
+                f.write(f"  Saliency + Memory: {unique_variance['r2_sal_mem']:.3f}\n")
+                f.write(f"  Saliency + EoR: {unique_variance['r2_sal_eor']:.3f}\n")
+                f.write(f"  Memory + EoR: {unique_variance['r2_mem_eor']:.3f}\n")
+                f.write(f"\nThree-way Combined R²: {unique_variance['r2_combined']:.3f}\n")
+                f.write(f"\nUnique variance (beyond other two):\n")
+                f.write(f"  Saliency: {unique_variance['unique_saliency']:.3f}\n")
+                f.write(f"  Memory: {unique_variance['unique_memory']:.3f}\n")
+                f.write(f"  EoR: {unique_variance['unique_eor']:.3f}\n")
+            else:
+                f.write(f"\nCombined R²: {unique_variance['r2_combined']:.3f}\n")
+                f.write(f"Unique variance - Saliency: {unique_variance['unique_saliency']:.3f}\n")
+                f.write(f"Unique variance - Memory: {unique_variance['unique_memory']:.3f}\n")
+                if 'shared_variance' in unique_variance:
+                    f.write(f"Shared variance: {unique_variance['shared_variance']:.3f}\n")
 
     print(f"Results saved to: {results_path}")
     print("\nAnalysis complete!")
