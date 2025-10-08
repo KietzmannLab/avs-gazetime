@@ -254,7 +254,7 @@ def process_fixations_with_saliency(fixation_data, saliency_dir, output_path, ra
     print(f"Screen-to-image offset: ({(screen_size[0]-image_size[0])/2:.1f}, {(screen_size[1]-image_size[1])/2:.1f})")
 
     # Prepare output columns
-    required_columns = ['subject', 'session', 'scene_id', 'trial', 'start_time', 'mean_gx', 'mean_gy']
+    required_columns = ['subject', 'session', 'sceneID', 'trial', 'start_time', 'mean_gx', 'mean_gy']
 
     # Check if all required columns exist
     missing_columns = [col for col in required_columns if col not in fixation_data.columns]
@@ -264,7 +264,7 @@ def process_fixations_with_saliency(fixation_data, saliency_dir, output_path, ra
 
     # Copy relevant columns
     output_data = fixation_data[required_columns].copy()
-    #output_data.rename(columns={'scene_id': 'scene_id'}, inplace=True)
+    output_data.rename(columns={'sceneID': 'scene_id'}, inplace=True)
 
     # Initialize saliency value column
     output_data['saliency_value'] = np.nan
