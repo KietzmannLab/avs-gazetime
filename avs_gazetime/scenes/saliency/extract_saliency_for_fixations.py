@@ -15,6 +15,8 @@ import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import h5py
+from scipy.special import softmax
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -29,16 +31,164 @@ except ImportError:
         return "/share/klab/datasets/avs/input"
 
 
-def load_saliency_map_from_npy(coco_id, saliency_dir):
-    """Load a generated saliency map by cocoID from NPY file."""
+def normalize_log_density_to_probability(log_density_map):
+    """
+    Convert log density saliency map to probability density (0-1 normalized).
+
+    Following pysaliency conventions:
+    - Apply exponential to convert from log space
+    - Normalize to sum to 1 (proper probability distribution)
+
+    Parameters:
+    -----------
+    log_density_map : np.ndarray
+        Saliency map in log density space
+
+    Returns:
+    --------
+    np.ndarray : Probability density map (sums to 1)
+    """
+    # Convert from log density to density using exponential
+    # Subtract max for numerical stability before exp
+    log_density_shifted = log_density_map - np.max(log_density_map)
+    density_map = np.exp(log_density_shifted)
+
+    # Normalize to sum to 1 (probability distribution)
+    prob_density = density_map / np.sum(density_map)
+
+    return prob_density
+
+
+def load_saliency_map_from_npy(coco_id, saliency_dir, normalize_to_prob=True):
+    """
+    Load a generated saliency map by cocoID from NPY file.
+
+    Parameters:
+    -----------
+    coco_id : int
+        Scene ID (COCO ID)
+    saliency_dir : str
+        Directory containing saliency NPY files
+    normalize_to_prob : bool
+        If True, convert log density to probability density (0-1)
+
+    Returns:
+    --------
+    np.ndarray or None : Saliency map (probability density if normalize_to_prob=True)
+    """
     filename = f"{str(int(coco_id)).zfill(12)}_MEG_size.npy"
     filepath = os.path.join(saliency_dir, filename)
 
     if os.path.exists(filepath):
-        return np.load(filepath)
+        saliency_map = np.load(filepath)
+
+        if normalize_to_prob:
+            # DeepGaze outputs are in log density space
+            saliency_map = normalize_log_density_to_probability(saliency_map)
+
+        return saliency_map
     else:
         print(f"Warning: Saliency map not found for scene {coco_id} at {filepath}")
         return None
+
+
+def classification_entropy(features, apply_softmax=True):
+    """
+    Compute classification entropy from network activations.
+
+    Parameters:
+    -----------
+    features : np.ndarray
+        Network activations (n_samples, n_features)
+    apply_softmax : bool
+        Whether to apply softmax normalization
+
+    Returns:
+    --------
+    np.ndarray : Classification entropy values
+    """
+    if apply_softmax:
+        features = softmax(features, axis=1)
+
+    # Avoid log(0) by adding small epsilon
+    features = np.maximum(features, np.finfo(float).eps)
+    return -np.sum(features * np.log(features), axis=1)
+
+
+def load_ease_of_recognition(subject, crop_size_pix, model_name, module_name,
+                             activation_feature="entropy", plots_dir_behav=None):
+    """
+    Load ease-of-recognition (classification entropy) values for a subject.
+
+    Parameters:
+    -----------
+    subject : int
+        Subject ID
+    crop_size_pix : int
+        Crop size in pixels
+    model_name : str
+        Neural network model name
+    module_name : str
+        Module/layer name
+    activation_feature : str
+        Feature type ('entropy' or 'norm')
+    plots_dir_behav : str or None
+        Path to behavioral plots directory
+
+    Returns:
+    --------
+    pd.DataFrame : DataFrame with crop_filename and ease values
+    """
+    if plots_dir_behav is None:
+        plots_dir_behav = PLOTS_DIR_BEHAV
+
+    subject_str = f"as{subject:02d}"
+    activations_dir = f"{plots_dir_behav}/crop_activations/{crop_size_pix}px"
+    activations_path = os.path.join(activations_dir, subject_str, model_name, module_name)
+
+    # Load features from HDF5 file
+    features_file = None
+    for file in os.listdir(activations_path):
+        if file.endswith('.hdf5'):
+            features_file = os.path.join(activations_path, file)
+            break
+
+    if not features_file:
+        print(f"Warning: No HDF5 file found for subject {subject} in {activations_path}")
+        return None
+
+    with h5py.File(features_file, "r") as f:
+        features = f["features"][:]
+
+    # Load filenames
+    txt_fname = os.path.join(activations_dir, subject_str, model_name, "file_names.txt")
+    if not os.path.exists(txt_fname):
+        # Look for any text file in the activations directory
+        txt_files = [f for f in os.listdir(activations_path) if f.endswith('.txt')]
+        if txt_files:
+            txt_fname = os.path.join(activations_path, txt_files[0])
+        else:
+            print(f"Warning: No filename mapping found for {subject_str}")
+            return None
+
+    with open(txt_fname, "r") as f:
+        filenames_full = [line.strip() for line in f.readlines()]
+
+    # Process features based on activation_feature type
+    if activation_feature == "entropy":
+        processed_features = classification_entropy(features)
+    elif activation_feature == "norm":
+        processed_features = np.linalg.norm(features, axis=1)
+    else:
+        raise ValueError("activation_feature must be 'entropy' or 'norm'")
+
+    # Create DataFrame
+    result_df = pd.DataFrame({
+        'crop_filename': [os.path.basename(f) for f in filenames_full],
+        f'ease_{module_name}': processed_features
+    })
+
+    return result_df
 
 
 def screen_to_image_coords(gx_screen, gy_screen, screen_size=(1024, 768), image_size=(947, 710)):
@@ -133,7 +283,11 @@ def extract_saliency_around_fixation(saliency_map, gx_screen, gy_screen, radius=
     return np.mean(values_in_circle)
 
 
-def load_fixation_data(crops_image_dir, subjects=[1, 2, 3, 4, 5]):
+def load_fixation_data(crops_image_dir, subjects=[1, 2, 3, 4, 5],
+                       load_ease=True, crop_size_pix=100,
+                       ease_model_name="resnet50_ecoset_crop",
+                       ease_module_name="fc", ease_feature="entropy",
+                       plots_dir_behav=None):
     """
     Load fixation data from crops metadata CSV files.
     Uses the same data source as memorability and ease-of-recognition analyses.
@@ -144,6 +298,18 @@ def load_fixation_data(crops_image_dir, subjects=[1, 2, 3, 4, 5]):
         Directory containing crop images and metadata
     subjects : list
         List of subject IDs to load
+    load_ease : bool
+        Whether to load ease-of-recognition values
+    crop_size_pix : int
+        Crop size in pixels
+    ease_model_name : str
+        Neural network model name for ease-of-recognition
+    ease_module_name : str
+        Module/layer name for ease-of-recognition
+    ease_feature : str
+        Feature type ('entropy' or 'norm')
+    plots_dir_behav : str or None
+        Path to behavioral plots directory
 
     Returns:
     --------
@@ -166,6 +332,28 @@ def load_fixation_data(crops_image_dir, subjects=[1, 2, 3, 4, 5]):
         metadata_df = metadata_df[metadata_df['type'] == 'fixation']
         metadata_df = metadata_df[metadata_df['recording'] == 'scene']
 
+        # Load ease-of-recognition values if requested
+        if load_ease:
+            try:
+                ease_df = load_ease_of_recognition(
+                    subject, crop_size_pix, ease_model_name, ease_module_name,
+                    activation_feature=ease_feature, plots_dir_behav=plots_dir_behav
+                )
+
+                if ease_df is not None:
+                    # Merge with metadata
+                    metadata_df = pd.merge(
+                        metadata_df,
+                        ease_df,
+                        on="crop_filename",
+                        how="left"
+                    )
+                    print(f"  Added ease-of-recognition values: {metadata_df[f'ease_{ease_module_name}'].notna().sum()} valid values")
+                else:
+                    print(f"  Could not load ease-of-recognition for subject {subject}")
+            except Exception as e:
+                print(f"  Error loading ease-of-recognition for subject {subject}: {e}")
+
         all_subjects_data.append(metadata_df)
 
     if not all_subjects_data:
@@ -175,6 +363,9 @@ def load_fixation_data(crops_image_dir, subjects=[1, 2, 3, 4, 5]):
     # Combine all subjects
     et_events = pd.concat(all_subjects_data, ignore_index=True)
     print(f"\nCombined data: {len(et_events)} total fixation events from {len(all_subjects_data)} subjects")
+
+    if load_ease and f'ease_{ease_module_name}' in et_events.columns:
+        print(f"Total ease-of-recognition values: {et_events[f'ease_{ease_module_name}'].notna().sum()}")
 
     return et_events
 
@@ -371,11 +562,12 @@ def visualize_saliency_extraction_examples(fixation_data, saliency_dir, scenes_d
             axes[0].plot(gx_img, gy_img, 'r+', markersize=10, markeredgewidth=2)
 
         # Right plot: Saliency map with fixation circles
-        # Normalize saliency map for visualization
-        saliency_normalized = (saliency_map - saliency_map.min()) / (saliency_map.max() - saliency_map.min())
+        # Saliency map is already a probability density (sums to 1)
+        # For visualization, we can either show raw probabilities or rescale for better contrast
+        saliency_for_viz = saliency_map.copy()
 
-        im = axes[1].imshow(saliency_normalized, cmap='hot', interpolation='bilinear')
-        axes[1].set_title(f"Saliency Map - {radius}px Extraction Radius", fontsize=14)
+        im = axes[1].imshow(saliency_for_viz, cmap='hot', interpolation='bilinear')
+        axes[1].set_title(f"Saliency Probability Density - {radius}px Extraction Radius", fontsize=14)
         axes[1].axis('off')
 
         # Draw circles around fixations on saliency map (same image coordinates)
@@ -392,7 +584,7 @@ def visualize_saliency_extraction_examples(fixation_data, saliency_dir, scenes_d
 
         # Add colorbar for saliency map
         cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
-        cbar.set_label('Normalized Saliency', rotation=270, labelpad=20)
+        cbar.set_label('Fixation Probability Density', rotation=270, labelpad=20)
 
         # Add text annotation explaining the visualization
         offset_x = (screen_size[0] - image_size[0]) / 2
@@ -433,6 +625,11 @@ def main():
     centerbias_name = "mit1003"
     crop_size_pix = 100  # Match memorability analysis
     subjects = [1, 2, 3, 4, 5]
+
+    # Ease-of-recognition parameters
+    ease_model_name = "resnet50_ecoset_crop"
+    ease_module_name = "fc"
+    ease_feature = "entropy"
 
     # Coordinate system parameters (from experiment setup)
     screen_size = (1024, 768)  # Screen size in pixels (width, height)
@@ -486,7 +683,16 @@ def main():
 
     # Load fixation data from crops metadata
     print("\nLoading fixation data from crops metadata...")
-    fixation_data = load_fixation_data(crops_image_dir, subjects=subjects)
+    fixation_data = load_fixation_data(
+        crops_image_dir,
+        subjects=subjects,
+        load_ease=True,
+        crop_size_pix=crop_size_pix,
+        ease_model_name=ease_model_name,
+        ease_module_name=ease_module_name,
+        ease_feature=ease_feature,
+        plots_dir_behav=output_dir
+    )
 
     if fixation_data is None:
         print("Error: Could not load fixation data")
@@ -508,11 +714,18 @@ def main():
     if result_data is not None:
         # Display sample results
         print(f"\nSample of results:")
-        print(result_data[['subject', 'session', 'scene_id', 'trial', 'saliency_value']].head(10))
+        display_cols = ['subject', 'session', 'scene_id', 'trial', 'saliency_value']
+        if f'ease_{ease_module_name}' in result_data.columns:
+            display_cols.append(f'ease_{ease_module_name}')
+        print(result_data[display_cols].head(10))
 
         # Basic statistics
-        print(f"\nSaliency value statistics:")
+        print(f"\nSaliency value statistics (probability density):")
         print(result_data['saliency_value'].describe())
+
+        if f'ease_{ease_module_name}' in result_data.columns:
+            print(f"\nEase-of-recognition statistics (classification entropy):")
+            print(result_data[f'ease_{ease_module_name}'].describe())
 
         # Create visualization examples
         visualize_saliency_extraction_examples(
