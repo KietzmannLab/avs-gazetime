@@ -179,7 +179,7 @@ def extract_saliency_around_fixation(saliency_map, gx_screen, gy_screen, radius=
     if len(values_in_circle) == 0:
         return np.nan
 
-    return np.mean(values_in_circle)
+    return np.median(values_in_circle)
 
 
 def load_fixation_data(crops_image_dir, subjects=[1, 2, 3, 4, 5]):
@@ -447,12 +447,12 @@ def visualize_saliency_extraction_examples(fixation_data, saliency_dir, scenes_d
         # Add text annotation explaining the visualization
         offset_x = (screen_size[0] - image_size[0]) / 2
         offset_y = (screen_size[1] - image_size[1]) / 2
-        fig.text(0.5, 0.02,
-                f'Red/Cyan circles show {radius}-pixel radius regions around each fixation.\n'
-                f'Saliency values are averaged within these circular regions.\n'
-                f'Eye-tracking coordinates (mean_gx, mean_gy) are in screen space ({screen_size[0]}×{screen_size[1]}px),\n'
-                f'converted to image space ({image_size[0]}×{image_size[1]}px) by subtracting offset ({offset_x:.1f}, {offset_y:.1f}).',
-                ha='center', fontsize=9, style='italic', wrap=True)
+        # fig.text(0.5, 0.02,
+        #         f'Red/Cyan circles show {radius}-pixel radius regions around each fixation.\n'
+        #         f'Saliency values are averaged within these circular regions.\n'
+        #         f'Eye-tracking coordinates (mean_gx, mean_gy) are in screen space ({screen_size[0]}×{screen_size[1]}px),\n'
+        #         f'converted to image space ({image_size[0]}×{image_size[1]}px) by subtracting offset ({offset_x:.1f}, {offset_y:.1f}).',
+        #         ha='center', fontsize=9, style='italic', wrap=True)
 
         plt.tight_layout(rect=[0, 0.06, 1, 1])
 
@@ -572,7 +572,7 @@ def main():
             scenes_dir,
             output_dir,
             radius=radius,
-            n_examples=2,
+            n_examples=5,
             seed=42,
             screen_size=screen_size,
             image_size=image_size

@@ -245,6 +245,16 @@ def preprocess_data(df):
         lambda x: x[(x['duration'] > x['duration'].quantile(0.02)) &
                    (x['duration'] < x['duration'].quantile(0.98))]
     ).reset_index(drop=True)
+    # throw out the most extreme saliency and ease-of-recognition values
+    df = df.groupby('subject').apply(
+        lambda x: x[(x['saliency_value'] > x['saliency_value'].quantile(0.02)) &
+                   (x['saliency_value'] < x['saliency_value'].quantile(0.98))]
+    ).reset_index(drop=True)
+    if has_eor:
+        df = df.groupby('subject').apply(
+            lambda x: x[(x['ease_fc'] > x['ease_fc'].quantile(0.02)) &
+                       (x['ease_fc'] < x['ease_fc'].quantile(0.98))]
+        ).reset_index(drop=True)
 
     # Remove missing values for required columns
     required_cols = ['saliency_value', 'mem_score', 'duration']
@@ -253,11 +263,18 @@ def preprocess_data(df):
         required_cols.append('ease_fc')
 
     df = df.dropna(subset=required_cols)
+    # make duration to ms
+    df['duration'] = df['duration'] * 1000.0
 
     # Log transform duration if specified
     if LOG_DURATION:
-        df['duration'] = np.log(df['duration'])
-
+        df['duration'] = np.log(df['duration'] + 1e-6)  # Add small constant to avoid log(0)
+        
+    # log the saliency values as well (they are often very skewed)
+    df['saliency_value'] = np.log(df['saliency_value'] + 1e-6)  # Add small constant to avoid log(0)
+    # log the ease-of-recognition values as well (they are often very skewed)
+    if has_eor:
+        df['ease_fc'] = np.log(df['ease_fc'] + 1e-6)  # Add small constant to avoid log(0)
     # Z-score features if specified
     if Z_SCORE_FEATURES:
         df['saliency_z'] = (df['saliency_value'] - df['saliency_value'].mean()) / df['saliency_value'].std()
@@ -482,76 +499,29 @@ def create_plots(df, output_dir):
     """Create visualization plots."""
     print("\n=== Creating plots ===")
 
-    has_eor = 'eor_z' in df.columns
+    # make lmplot with xbins = 15
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    ymin = 275
+    ymax = 310
+    for i, (feature, ax) in enumerate(zip(['saliency_z', 'mem_score_z', 'eor_z'], axes)):
+        if feature in df.columns:
+            ax = sns.regplot(
+                x=feature,
+                y='duration',
+                x_bins=None, data=df, ax=ax,
+                scatter_kws={'s': 15, 'alpha': 0.1, 'color': 'blue'},
+                line_kws={'color': 'red',}, fit_reg=False)
+            
+            ax.set_xlabel(feature.replace('_z', '').replace('_', ' ').title())
+            ax.set_ylabel('Log Duration' if LOG_DURATION else 'Duration')
+            ax.set_title(f'Duration vs {feature.replace("_z", "").replace("_", " ")}')
+            #ax.set_ylim(ymin, ymax)
+        else:
+            ax.axis('off')
+    # set y limits to be the same across all plots
+   
 
-    if has_eor:
-        # Set up plotting (3x2 grid for 3 features)
-        fig, axes = plt.subplots(3, 2, figsize=(14, 16))
-
-        # Correlation matrix
-        corr_data = df[['duration', 'saliency_z', 'mem_score_z', 'eor_z']].corr()
-        sns.heatmap(corr_data, annot=True, cmap='coolwarm', center=0,
-                    square=True, ax=axes[0,0])
-        axes[0,0].set_title('Correlation Matrix')
-
-        # Saliency vs Duration
-        sns.scatterplot(data=df, x='saliency_z', y='duration', alpha=0.4, ax=axes[0,1])
-        axes[0,1].set_xlabel('Saliency (z-scored)')
-        axes[0,1].set_ylabel('Fixation Duration (ms)')
-        axes[0,1].set_title('Saliency vs Duration')
-
-        # Memory vs Duration
-        sns.scatterplot(data=df, x='mem_score_z', y='duration', alpha=0.4, ax=axes[1,0])
-        axes[1,0].set_xlabel('Memory Score (z-scored)')
-        axes[1,0].set_ylabel('Fixation Duration (ms)')
-        axes[1,0].set_title('Memory vs Duration')
-
-        # EoR vs Duration
-        sns.scatterplot(data=df, x='eor_z', y='duration', alpha=0.4, ax=axes[1,1])
-        axes[1,1].set_xlabel('Ease-of-Recognition (z-scored)')
-        axes[1,1].set_ylabel('Fixation Duration (ms)')
-        axes[1,1].set_title('EoR vs Duration')
-
-        # Saliency vs Memory
-        sns.scatterplot(data=df, x='saliency_z', y='mem_score_z', alpha=0.4, ax=axes[2,0])
-        axes[2,0].set_xlabel('Saliency (z-scored)')
-        axes[2,0].set_ylabel('Memory Score (z-scored)')
-        axes[2,0].set_title('Saliency vs Memory')
-
-        # Saliency vs EoR
-        sns.scatterplot(data=df, x='saliency_z', y='eor_z', alpha=0.4, ax=axes[2,1])
-        axes[2,1].set_xlabel('Saliency (z-scored)')
-        axes[2,1].set_ylabel('Ease-of-Recognition (z-scored)')
-        axes[2,1].set_title('Saliency vs EoR')
-
-    else:
-        # Original 2x2 grid
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-
-        # Correlation matrix
-        corr_data = df[['duration', 'saliency_z', 'mem_score_z']].corr()
-        sns.heatmap(corr_data, annot=True, cmap='coolwarm', center=0,
-                    square=True, ax=axes[0,0])
-        axes[0,0].set_title('Correlation Matrix')
-
-        # Saliency vs Duration
-        sns.scatterplot(data=df, x='saliency_z', y='duration', alpha=0.6, ax=axes[0,1])
-        axes[0,1].set_xlabel('Saliency (z-scored)')
-        axes[0,1].set_ylabel('Fixation Duration (ms)')
-        axes[0,1].set_title('Saliency vs Duration')
-
-        # Memory vs Duration
-        sns.scatterplot(data=df, x='mem_score_z', y='duration', alpha=0.6, ax=axes[1,0])
-        axes[1,0].set_xlabel('Memory Score (z-scored)')
-        axes[1,0].set_ylabel('Fixation Duration (ms)')
-        axes[1,0].set_title('Memory vs Duration')
-
-        # Saliency vs Memory
-        sns.scatterplot(data=df, x='saliency_z', y='mem_score_z', alpha=0.6, ax=axes[1,1])
-        axes[1,1].set_xlabel('Saliency (z-scored)')
-        axes[1,1].set_ylabel('Memory Score (z-scored)')
-        axes[1,1].set_title('Saliency vs Memory')
-
+        
     plt.tight_layout()
 
     # Save plot
