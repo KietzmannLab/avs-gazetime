@@ -205,7 +205,7 @@ def process_fixations_with_saliency(fixation_data, saliency_dir, output_path, ra
     print(f"Screen-to-image offset: ({(screen_size[0]-image_size[0])/2:.1f}, {(screen_size[1]-image_size[1])/2:.1f})")
 
     # Prepare output columns
-    required_columns = ['subject', 'session', 'sceneID', 'trial', 'start_time', 'mean_gx', 'mean_gy']
+    required_columns = ['subject', 'session', 'scene_id', 'trial', 'start_time', 'mean_gx', 'mean_gy']
 
     # Check if all required columns exist
     missing_columns = [col for col in required_columns if col not in fixation_data.columns]
@@ -215,7 +215,7 @@ def process_fixations_with_saliency(fixation_data, saliency_dir, output_path, ra
 
     # Copy relevant columns
     output_data = fixation_data[required_columns].copy()
-    output_data.rename(columns={'sceneID': 'scene_id'}, inplace=True)
+    #output_data.rename(columns={'scene_id': 'scene_id'}, inplace=True)
 
     # Initialize saliency value column
     output_data['saliency_value'] = np.nan
@@ -313,7 +313,7 @@ def visualize_saliency_extraction_examples(fixation_data, saliency_dir, scenes_d
     np.random.seed(seed)
 
     # Select random scenes with sufficient fixations
-    scene_fixation_counts = fixation_data.groupby('sceneID').size()
+    scene_fixation_counts = fixation_data.groupby('scene_id').size()
     scenes_with_fixations = scene_fixation_counts[scene_fixation_counts >= 5].index.tolist()
 
     if len(scenes_with_fixations) < n_examples:
@@ -344,7 +344,7 @@ def visualize_saliency_extraction_examples(fixation_data, saliency_dir, scenes_d
             continue
 
         # Get fixations for this scene
-        scene_fixations = fixation_data[fixation_data['sceneID'] == scene_id].copy()
+        scene_fixations = fixation_data[fixation_data['scene_id'] == scene_id].copy()
 
         # Randomly sample up to 10 fixations to avoid overcrowding
         if len(scene_fixations) > 10:

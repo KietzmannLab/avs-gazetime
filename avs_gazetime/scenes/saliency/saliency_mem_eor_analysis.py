@@ -161,7 +161,7 @@ def merge_all_data():
 
         # Get saliency data for this subject
         sal_df = saliency_df[saliency_df['subject'] == subject].copy()
-
+    
         # Merge on common columns
         merge_cols = ['subject', 'session', 'scene_id', 'trial', 'start_time']
 
@@ -174,17 +174,18 @@ def merge_all_data():
         # For EoR, we need to match by crop_filename (need to construct this)
         # This is a simplified approach - in practice you'd need the crop metadata
         print(f"Found {len(merged)} overlapping sal/mem records for subject {subject}")
-
+    
         if len(merged) > 0:
             all_data.append(merged)
-
+    
     if not all_data:
         print("Error: No overlapping data found across subjects")
         return None
 
     combined_df = pd.concat(all_data, ignore_index=True)
     print(f"\nCombined dataset: {len(combined_df)} fixations across {len(SUBJECTS)} subjects")
-
+    print(combined_df.head())
+    print(combined_df.columns)
     return combined_df
 
 
@@ -193,7 +194,6 @@ def preprocess_data(df):
     print("\n=== Preprocessing data ===")
 
     # Use memorability duration (more complete dataset)
-    df['duration'] = df['duration_mem']
 
     # Remove outliers (2nd-98th percentile per subject)
     df = df.groupby('subject').apply(
