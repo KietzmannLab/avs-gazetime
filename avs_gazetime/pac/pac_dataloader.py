@@ -8,7 +8,7 @@ import avs_gazetime.utils.load_data as load_data
 def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=None):
     """
     Load MEG data and apply necessary preprocessing steps including optional ERF removal.
-    
+
     Parameters:
     -----------
     event_type : str
@@ -20,8 +20,12 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
     channel_idx : list or None
         Indices of channels to include. If None, all channels are included.
     remove_erfs : list or None
-        List of ERF types to remove ('saccade', 'fixation'). If None, no ERFs are removed.
-        
+        List of ERF types to remove. Options:
+        - 'saccade': Remove pre-saccade ERF
+        - 'fixation': Remove fixation ERF (after aligning to fixation onset)
+        - 'saccade_post': Remove post-saccade ERF (subsequent saccade)
+        If None, no ERFs are removed.
+
     Returns:
     --------
     meg_data : np.ndarray
@@ -37,52 +41,69 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
         merged_df_saccade = load_data.merge_meta_df("saccade")
         merged_df_fixation = load_data.merge_meta_df("fixation")
         merged_df = load_data.match_saccades_to_fixations(merged_df_fixation, merged_df_saccade, saccade_type="pre-saccade")
-        
+
         # Load MEG data for saccades
         meg_data = load_data.process_meg_data_for_roi(ch_type, "saccade", sessions, apply_median_scale=True, channel_idx=channel_idx)
-        
+
         # Apply index mask to meg data
         meg_data = meg_data[merged_df.index, :, :]
-        
+
         # Reset index after masking
         merged_df.reset_index(drop=True, inplace=True)
-        
+
         # Remove saccade ERF if specified
         if "saccade" in remove_erfs:
             print("Removing saccade ERF")
             sacc_erf = np.median(meg_data, axis=0)
             meg_data = meg_data - sacc_erf
-        
+
         # Calculate sampling frequency for time shifting
         S_FREQ = 500  # Sampling frequency in Hz
-        
+
         # Get saccade durations and calculate shifts
-        saccade_duration = merged_df_saccade["duration"].values
+        saccade_duration = merged_df["duration"].values
         n_shifts_per_event = (saccade_duration * S_FREQ).astype(int)
-        
+
         # Shift data to align with fixation onset
-        meg_data = np.array([np.roll(meg_data[i], -n_shifts_per_event[i]) for i in range(meg_data.shape[0])])
-        
+        meg_data = np.array([np.roll(meg_data[i], -n_shifts_per_event[i], axis=-1) for i in range(meg_data.shape[0])])
+
         # Remove fixation ERF if specified
         if "fixation" in remove_erfs:
             print("Removing fixation ERF")
             fix_erf = np.median(meg_data, axis=0)
             meg_data = meg_data - fix_erf
-        
+
+        # Remove post-saccade ERF if specified (subsequent saccade)
+        if "saccade_post" in remove_erfs:
+            print("Removing post-saccade ERF (subsequent saccade)")
+            # Get fixation durations to roll backwards to subsequent saccade onset
+            fixation_durations = merged_df["associated_fixation_duration"].values
+            n_shifts_fixation = (fixation_durations * S_FREQ).astype(int)
+
+            # Roll backwards by fixation duration to align to subsequent saccade onset
+            meg_data_rolled = np.array([np.roll(meg_data[i], -n_shifts_fixation[i], axis=-1) for i in range(meg_data.shape[0])])
+
+            # Remove the post-saccade ERF
+            post_sacc_erf = np.median(meg_data_rolled, axis=0)
+            meg_data_rolled = meg_data_rolled - post_sacc_erf
+
+            # Roll forward to get back to fixation onset
+            meg_data = np.array([np.roll(meg_data_rolled[i], n_shifts_fixation[i], axis=-1) for i in range(meg_data_rolled.shape[0])])
+
         # Remove events without associated fixation duration
         valid_fixation_mask = ~np.isnan(merged_df["associated_fixation_duration"])
         merged_df = merged_df[valid_fixation_mask]
         meg_data = meg_data[valid_fixation_mask]
-        
+
         # Set appropriate duration column
         dur_col = "associated_fixation_duration"
     else:
         # Load metadata for the specified event type
         merged_df = load_data.merge_meta_df(event_type)
-        
+
         # Load MEG data
         meg_data = load_data.process_meg_data_for_roi(ch_type, event_type, sessions, apply_median_scale=True, channel_idx=channel_idx)
-        
+
         # Set appropriate duration column
         dur_col = "duration" if event_type == "fixation" else "associated_fixation_duration"
     

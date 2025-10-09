@@ -295,7 +295,24 @@ if __name__ == "__main__":
                 print("removing fixation erf")
                 fix_erf = np.median(meg_data, axis=0)
                 meg_data = meg_data - fix_erf
-                
+
+            # Remove post-saccade ERF if specified (subsequent saccade)
+            if "saccade_post" in remove_erfs:
+                print("Removing post-saccade ERF (subsequent saccade)")
+                # Get fixation durations to roll backwards to subsequent saccade onset
+                fixation_durations = merged_df["associated_fixation_duration"].values
+                n_shifts_fixation = (fixation_durations * S_FREQ).astype(int)
+
+                # Roll backwards by fixation duration to align to subsequent saccade onset
+                meg_data_rolled = np.array([np.roll(meg_data[i], -n_shifts_fixation[i], axis=-1) for i in range(meg_data.shape[0])])
+
+                # Remove the post-saccade ERF
+                post_sacc_erf = np.median(meg_data_rolled, axis=0)
+                meg_data_rolled = meg_data_rolled - post_sacc_erf
+
+                # Roll forward to get back to fixation onset
+                meg_data = np.array([np.roll(meg_data_rolled[i], n_shifts_fixation[i], axis=-1) for i in range(meg_data_rolled.shape[0])])
+
             # remove events without associated fixation duration
             print("removing events without associated fixation duration")
             print("before", len(merged_df))
