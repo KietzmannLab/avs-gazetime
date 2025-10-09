@@ -1,6 +1,6 @@
 """
 Minimalistic analysis script examining how saliency, memorability, and ease-of-recognition
-relate to fixation duration, with unique variance analysis.
+relate to fixation duration, with proper 3-way variance partitioning analysis.
 
 This script integrates three visual features:
 - Saliency (from Deepgaze IIE)
@@ -19,6 +19,7 @@ import statsmodels.formula.api as smf
 from scipy.stats import pearsonr
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
+from matplotlib_venn import venn3, venn3_circles
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -238,8 +239,6 @@ def preprocess_data(df):
     # Check if EoR is available
     has_eor = 'ease_fc' in df.columns
 
-    # Use memorability duration (more complete dataset)
-
     # Remove outliers (2nd-98th percentile per subject)
     df = df.groupby('subject').apply(
         lambda x: x[(x['duration'] > x['duration'].quantile(0.02)) &
@@ -275,7 +274,7 @@ def preprocess_data(df):
     # log the ease-of-recognition values as well (they are often very skewed)
     if has_eor:
         df['ease_fc'] = np.log(df['ease_fc'] + 1e-6)  # Add small constant to avoid log(0)
-    # Z-score features if specified
+    ## Z-score features if specified (per subject)
     if Z_SCORE_FEATURES:
         df['saliency_z'] = (df['saliency_value'] - df['saliency_value'].mean()) / df['saliency_value'].std()
         df['mem_score_z'] = (df['mem_score'] - df['mem_score'].mean()) / df['mem_score'].std()
@@ -293,6 +292,16 @@ def preprocess_data(df):
         print(f"Ease-of-recognition available: Yes ({df['eor_z'].notna().sum()} valid values)")
     else:
         print("Ease-of-recognition available: No")
+        
+    # add the fixation sequence number within each trial (ignore the start time for this)
+    df = df.groupby(['subject', 'session', 'scene_id', 'trial']).apply(
+        lambda x: x.assign(fix_sequence=np.arange(1, len(x) + 1))
+    ).reset_index(drop=True)
+    
+    # whatis the mean fixation duration as a function of fixation sequence number
+    mean_durations = df.groupby('fix_sequence')['duration'].mean()
+    print("\nMean fixation duration by fixation sequence number:")
+    print(mean_durations)
 
     return df
 
@@ -375,6 +384,9 @@ def fit_combined_model(df):
         else:
             formula = "duration ~ saliency_z + mem_score_z"
             predictor_cols = ['saliency_z', 'mem_score_z']
+            
+        # add the fixation sequence number as a covariate
+        formula += " + fix_sequence"
 
         model = smf.mixedlm(formula, df, groups=df["subject"])
         result = model.fit()
@@ -407,129 +419,319 @@ def fit_combined_model(df):
         print(f"Combined mixed-effects model failed: {e}")
         return None
 
+"""
+Corrected variance partitioning functions using proper commonality analysis.
+Based on Ray-Mukherjee et al. (2014) and Nimon et al. (2008).
+
+Replace the variance_partitioning_3way() and related functions in your script
+with these corrected versions.
+"""
+
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+
+
+def variance_partitioning_3way(df, outcome='duration', 
+                                pred1='saliency_z', pred2='mem_score_z', pred3='eor_z'):
+    """
+    Perform 3-way variance partitioning.
+    Returns all unique and shared variance components.
+    """
+    
+    y = df[outcome].values.reshape(-1, 1)
+    A = df[pred1].values.reshape(-1, 1)
+    B = df[pred2].values.reshape(-1, 1)
+    C = df[pred3].values.reshape(-1, 1)
+    
+    # Fit all models
+    R1 = r2_score(y, LinearRegression().fit(A, y).predict(A))
+    R2 = r2_score(y, LinearRegression().fit(B, y).predict(B))
+    R3 = r2_score(y, LinearRegression().fit(C, y).predict(C))
+    
+    R12 = r2_score(y, LinearRegression().fit(np.hstack([A, B]), y).predict(np.hstack([A, B])))
+    R13 = r2_score(y, LinearRegression().fit(np.hstack([A, C]), y).predict(np.hstack([A, C])))
+    R23 = r2_score(y, LinearRegression().fit(np.hstack([B, C]), y).predict(np.hstack([B, C])))
+    
+    R123 = r2_score(y, LinearRegression().fit(np.hstack([A, B, C]), y).predict(np.hstack([A, B, C])))
+    
+    # VPA formulas
+    y123 = R1 + R2 + R3 - R12 - R13 - R23 + R123
+    y12 = R1 + R2 - R12 - y123
+    y13 = R1 + R3 - R13 - y123
+    y23 = R2 + R3 - R23 - y123
+    y1 = R1 - y12 - y13 - y123
+    y2 = R2 - y12 - y23 - y123
+    y3 = R3 - y13 - y23 - y123
+    
+    return {
+        'unique_A': y1,
+        'unique_B': y2,
+        'unique_C': y3,
+        'common_AB': y12,
+        'common_AC': y13,
+        'common_BC': y23,
+        'common_ABC': y123,
+        'total_explained': R123,
+        'unexplained': 1 - R123,
+        'r2_A': R1, 'r2_B': R2, 'r2_C': R3,
+        'r2_AB': R12, 'r2_AC': R13, 'r2_BC': R23
+    }
+
+
+def print_variance_results(results, labels=('Saliency', 'Memorability', 'Ease-of-Recognition')):
+    """
+    Print variance partitioning results in a clear, interpretable format.
+    
+    Handles negative commonality values appropriately by explaining their meaning.
+    """
+    
+    print("\n" + "="*70)
+    print("VARIANCE PARTITIONING RESULTS (Commonality Analysis)")
+    print("="*70)
+    
+    # Overall variance explained
+    print(f"\nTotal Explained Variance: {results['total_explained']*100:.2f}%")
+    print(f"Unexplained Variance: {results['unexplained']*100:.2f}%")
+    
+    # Individual R² (each predictor alone)
+    print(f"\n--- Individual Predictor R² ---")
+    print(f"  {labels[0]} alone: {results['r2_A']*100:.2f}%")
+    print(f"  {labels[1]} alone: {results['r2_B']*100:.2f}%")
+    print(f"  {labels[2]} alone: {results['r2_C']*100:.2f}%")
+    
+    # Pairwise R² (each pair together)
+    print(f"\n--- Pairwise R² ---")
+    print(f"  {labels[0]} + {labels[1]}: {results['r2_AB']*100:.2f}%")
+    print(f"  {labels[0]} + {labels[2]}: {results['r2_AC']*100:.2f}%")
+    print(f"  {labels[1]} + {labels[2]}: {results['r2_BC']*100:.2f}%")
+    
+    # Unique contributions (most important for interpretation)
+    print(f"\n--- UNIQUE Contributions (after controlling for others) ---")
+    print(f"  {labels[0]}: {results['unique_A']*100:.2f}%")
+    print(f"  {labels[1]}: {results['unique_B']*100:.2f}%")
+    print(f"  {labels[2]}: {results['unique_C']*100:.2f}%")
+    total_unique = results['unique_A'] + results['unique_B'] + results['unique_C']
+    print(f"  Sum of unique: {total_unique*100:.2f}%")
+    
+    # Common (shared) contributions
+    print(f"\n--- COMMON (Shared) Contributions ---")
+    print(f"  {labels[0]} ∩ {labels[1]}: {results['common_AB']*100:.2f}%")
+    print(f"  {labels[0]} ∩ {labels[2]}: {results['common_AC']*100:.2f}%")
+    print(f"  {labels[1]} ∩ {labels[2]}: {results['common_BC']*100:.2f}%")
+    print(f"  {labels[0]} ∩ {labels[1]} ∩ {labels[2]}: {results['common_ABC']*100:.2f}%")
+    
+    # Interpretation of negative values if present
+    negative_found = False
+    negative_terms = []
+    
+    if results['common_AB'] < 0:
+        negative_found = True
+        negative_terms.append(f"{labels[0]}-{labels[1]}")
+    if results['common_AC'] < 0:
+        negative_found = True
+        negative_terms.append(f"{labels[0]}-{labels[2]}")
+    if results['common_BC'] < 0:
+        negative_found = True
+        negative_terms.append(f"{labels[1]}-{labels[2]}")
+    
+    if negative_found:
+        print(f"\n--- Note on Negative Commonality ---")
+        print(f"  Negative values found for: {', '.join(negative_terms)}")
+        print(f"  This indicates SUPPRESSION effects:")
+        print(f"  When these predictors are used together, they explain")
+        print(f"  LESS variance than the sum of their individual contributions.")
+        print(f"  This is a valid statistical phenomenon occurring when")
+        print(f"  predictors are correlated and have complex relationships.")
+    
+    # Proportional breakdown
+    print(f"\n--- Proportional Breakdown of Explained Variance ---")
+    if results['total_explained'] > 0:
+        print(f"  {labels[0]} unique: {results['unique_A']/results['total_explained']*100:.1f}%")
+        print(f"  {labels[1]} unique: {results['unique_B']/results['total_explained']*100:.1f}%")
+        print(f"  {labels[2]} unique: {results['unique_C']/results['total_explained']*100:.1f}%")
+        print(f"  Shared components: {(results['total_explained']-total_unique)/results['total_explained']*100:.1f}%")
+    
+    print("="*70)
+
+
+def plot_variance_venn(results, labels=('Saliency', 'Memorability', 'Ease-of-Recognition'),
+                       output_path=None):
+    """
+    Create Venn diagram for 3-way variance partitioning.
+    
+    Note: Venn diagrams cannot properly represent negative commonality values.
+    For displays, we show absolute values and add a note about suppression.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib_venn import venn3, venn3_circles
+    
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Check for negative values
+    has_negative = (results['common_AB'] < 0 or results['common_AC'] < 0 or 
+                    results['common_BC'] < 0 or results['common_ABC'] < 0)
+    
+    # For Venn diagram display, we need non-negative values
+    # Use absolute values but add warning
+    subsets = (
+        abs(results['unique_A']) * 100,
+        abs(results['unique_B']) * 100,
+        abs(results['common_AB']) * 100,
+        abs(results['unique_C']) * 100,
+        abs(results['common_AC']) * 100,
+        abs(results['common_BC']) * 100,
+        abs(results['common_ABC']) * 100
+    )
+    
+    subsets = tuple(round(x, 2) for x in subsets)
+    
+    v = venn3(subsets=subsets, set_labels=labels, ax=ax, alpha=0.6)
+    
+    # Colour the circles
+    colours = ['#ff9999', '#9999ff', '#99ff99']
+    for i, patch in enumerate(v.patches):
+        if patch:
+            patch.set_facecolor(colours[i % 3])
+            patch.set_edgecolor('black')
+            patch.set_linewidth(2)
+    
+    # Add circle outlines
+    venn3_circles(subsets=subsets, linewidth=2, ax=ax)
+    
+    # Format labels
+    for text in v.set_labels:
+        if text:
+            text.set_fontsize(16)
+            text.set_fontweight('bold')
+    
+    for text in v.subset_labels:
+        if text:
+            text.set_fontsize(12)
+            current_text = text.get_text()
+            if current_text and current_text != '0.0':
+                text.set_text(f'{current_text}%')
+    
+    total_explained = results['total_explained'] * 100
+    title_text = f'variance partitioning of fixation furation\ntotal var explained: {total_explained:.2f}%'
+    
+    # if has_negative:
+    #     title_text += '\n(Note: Negative commonality values shown as absolute; indicates suppression)'
+    
+    plt.title(title_text, fontsize=18, fontweight='bold', pad=20)
+    
+    # Add text box explaining unique contributions
+    unique_text = (f"Unique contributions:\n"
+                   f"{labels[0]}: {results['unique_A']*100:.2f}%\n"
+                   f"{labels[1]}: {results['unique_B']*100:.2f}%\n"
+                   f"{labels[2]}: {results['unique_C']*100:.2f}%")
+    
+    ax.text(0.02, 0.02, unique_text, transform=ax.transAxes,
+            fontsize=11, verticalalignment='bottom',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Venn diagram saved to: {output_path}")
+    
+    return fig, ax
+
 
 def unique_variance_analysis(df, individual_results, combined_results):
-    """Perform unique variance analysis."""
-    print("\n=== Unique variance analysis ===")
-
-    if combined_results is None:
-        print("Cannot perform unique variance analysis without combined model")
-        return None
+    """
+    Perform proper 3-way variance partitioning analysis.
+    
+    This is the function to replace in your main script.
+    """
+    print("\n=== Variance Partitioning Analysis ===")
 
     has_eor = 'eor_z' in df.columns
 
-    # R² values
-    r2_saliency = individual_results['saliency_z']['r2']
-    r2_memory = individual_results['mem_score_z']['r2']
-    r2_combined = combined_results['r2']
+    if not has_eor:
+        print("Warning: Ease-of-recognition not available, skipping variance partitioning")
+        return None
 
-    results = {
-        'r2_saliency': r2_saliency,
-        'r2_memory': r2_memory,
-        'r2_combined': r2_combined,
-    }
+    labels = ('Saliency', 'Memorability', 'Ease-of-Recognition')
+    
+    results = variance_partitioning_3way(
+        df, 
+        outcome='duration',
+        pred1='saliency_z', 
+        pred2='mem_score_z', 
+        pred3='eor_z'
+    )
+    
+    print_variance_results(results, labels)
+    
+    return results
 
-    print(f"Individual R² - Saliency: {r2_saliency:.3f}")
-    print(f"Individual R² - Memory: {r2_memory:.3f}")
+def unique_variance_analysis(df, individual_results, combined_results):
+    """
+    Perform proper 3-way variance partitioning analysis.
+    """
+    print("\n=== Variance Partitioning Analysis ===")
 
-    if has_eor:
-        r2_eor = individual_results['eor_z']['r2']
-        results['r2_eor'] = r2_eor
-        print(f"Individual R² - EoR: {r2_eor:.3f}")
+    has_eor = 'eor_z' in df.columns
 
-        # For 3-way analysis, fit pairwise combined models
-        try:
-            # Saliency + Memory
-            X_sm = df[['saliency_z', 'mem_score_z']].values
-            y = df['duration'].values
-            reg_sm = LinearRegression().fit(X_sm, y)
-            r2_sal_mem = r2_score(y, reg_sm.predict(X_sm))
+    if not has_eor:
+        print("Warning: Ease-of-recognition not available, skipping variance partitioning")
+        return None
 
-            # Saliency + EoR
-            X_se = df[['saliency_z', 'eor_z']].values
-            reg_se = LinearRegression().fit(X_se, y)
-            r2_sal_eor = r2_score(y, reg_se.predict(X_se))
-
-            # Memory + EoR
-            X_me = df[['mem_score_z', 'eor_z']].values
-            reg_me = LinearRegression().fit(X_me, y)
-            r2_mem_eor = r2_score(y, reg_me.predict(X_me))
-
-            # Unique variance (beyond the other two)
-            unique_saliency = r2_combined - r2_mem_eor
-            unique_memory = r2_combined - r2_sal_eor
-            unique_eor = r2_combined - r2_sal_mem
-
-            results['r2_sal_mem'] = r2_sal_mem
-            results['r2_sal_eor'] = r2_sal_eor
-            results['r2_mem_eor'] = r2_mem_eor
-            results['unique_saliency'] = unique_saliency
-            results['unique_memory'] = unique_memory
-            results['unique_eor'] = unique_eor
-
-            print(f"Combined R² (all three): {r2_combined:.3f}")
-            print(f"Combined R² (Sal + Mem): {r2_sal_mem:.3f}")
-            print(f"Combined R² (Sal + EoR): {r2_sal_eor:.3f}")
-            print(f"Combined R² (Mem + EoR): {r2_mem_eor:.3f}")
-            print(f"\nUnique variance - Saliency: {unique_saliency:.3f}")
-            print(f"Unique variance - Memory: {unique_memory:.3f}")
-            print(f"Unique variance - EoR: {unique_eor:.3f}")
-
-        except Exception as e:
-            print(f"Error computing 3-way unique variance: {e}")
-    else:
-        # 2-way analysis (original code)
-        unique_saliency = r2_combined - r2_memory
-        unique_memory = r2_combined - r2_saliency
-        shared_variance = r2_saliency + r2_memory - r2_combined
-
-        results['unique_saliency'] = unique_saliency
-        results['unique_memory'] = unique_memory
-        results['shared_variance'] = shared_variance
-
-        print(f"Combined R²: {r2_combined:.3f}")
-        print(f"Unique variance - Saliency: {unique_saliency:.3f}")
-        print(f"Unique variance - Memory: {unique_memory:.3f}")
-        print(f"Shared variance: {shared_variance:.3f}")
-
+    labels = ('Saliency', 'Memorability', 'Ease-of-Recognition')
+    
+    results = variance_partitioning_3way(
+        df, 
+        outcome='duration',
+        pred1='saliency_z', 
+        pred2='mem_score_z', 
+        pred3='eor_z'
+    )
+    
+    print_variance_results(results, labels)
+    
     return results
 
 
-def create_plots(df, output_dir):
+def create_plots(df, variance_results, output_dir):
     """Create visualization plots."""
     print("\n=== Creating plots ===")
 
-    # make lmplot with xbins = 15
+    # Create regression plots
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    ymin = 275
-    ymax = 310
+    ylims = 250,330
     for i, (feature, ax) in enumerate(zip(['saliency_z', 'mem_score_z', 'eor_z'], axes)):
         if feature in df.columns:
             ax = sns.regplot(
                 x=feature,
                 y='duration',
-                x_bins=None, data=df, ax=ax,
-                scatter_kws={'s': 15, 'alpha': 0.1, 'color': 'blue'},
-                line_kws={'color': 'red',}, fit_reg=False)
+                x_bins=15, data=df, ax=ax,
+                scatter_kws={'s': 17, 'alpha': 0.7, 'color': 'blue'},
+                line_kws={'color': 'red'}, fit_reg=False)
             
             ax.set_xlabel(feature.replace('_z', '').replace('_', ' ').title())
-            ax.set_ylabel('Log Duration' if LOG_DURATION else 'Duration')
-            ax.set_title(f'Duration vs {feature.replace("_z", "").replace("_", " ")}')
-            #ax.set_ylim(ymin, ymax)
+            ax.set_ylabel('Log Duration' if LOG_DURATION else 'duration [ms]')
+            ax.set_title(f'duration vs {feature.replace("_z", "").replace("_", " ")}')
+            ax.set_ylim(ylims)
+            # despine
+            sns.despine(ax=ax)
         else:
             ax.axis('off')
-    # set y limits to be the same across all plots
-   
-
         
     plt.tight_layout()
 
-    # Save plot
+    # Save regression plot
     plot_path = os.path.join(output_dir, 'saliency_mem_eor_analysis.png')
     plt.savefig(plot_path, dpi=300, bbox_inches='tight')
     plt.close()
+    print(f"Regression plot saved to: {plot_path}")
 
-    print(f"Plot saved to: {plot_path}")
+    # Create Venn diagram if variance results available
+    if variance_results is not None:
+        venn_path = os.path.join(output_dir, 'variance_partition_venn_3way.png')
+        labels = ('Saliency', 'Memorability', 'Ease-of-Recognition')
+        plot_variance_venn(variance_results, labels, output_path=venn_path)
 
 
 def main():
@@ -558,28 +760,19 @@ def main():
     # Fit combined model
     combined_results = fit_combined_model(df)
 
-    # Unique variance analysis
-    unique_variance = unique_variance_analysis(df, individual_results, combined_results)
+    # Variance partitioning analysis
+    variance_results = unique_variance_analysis(df, individual_results, combined_results)
 
     # Create plots
-    create_plots(df, output_dir)
+    create_plots(df, variance_results, output_dir)
 
     # Save results
-    results = {
-        'correlations': correlations,
-        'individual_results': individual_results,
-        'combined_results': combined_results,
-        'unique_variance': unique_variance,
-        'n_fixations': len(df),
-        'n_subjects': len(df['subject'].unique())
-    }
-
     results_path = os.path.join(output_dir, 'analysis_results.txt')
     with open(results_path, 'w') as f:
         f.write("Saliency, Memorability, and Ease-of-Recognition Analysis Results\n")
         f.write("=" * 60 + "\n\n")
 
-        f.write(f"Dataset: {results['n_fixations']} fixations from {results['n_subjects']} subjects\n\n")
+        f.write(f"Dataset: {len(df)} fixations from {len(df['subject'].unique())} subjects\n\n")
 
         f.write("CORRELATIONS:\n")
         for key, value in correlations.items():
@@ -589,28 +782,27 @@ def main():
         for predictor, values in individual_results.items():
             f.write(f"{predictor}: R² = {values['r2']:.3f}, β = {values['coef']:.3f}\n")
 
-        if unique_variance:
-            f.write("\nUNIQUE VARIANCE ANALYSIS:\n")
-            f.write(f"Individual R² - Saliency: {unique_variance['r2_saliency']:.3f}\n")
-            f.write(f"Individual R² - Memory: {unique_variance['r2_memory']:.3f}\n")
-
-            if 'r2_eor' in unique_variance:
-                f.write(f"Individual R² - EoR: {unique_variance['r2_eor']:.3f}\n")
-                f.write(f"\nPairwise Combined R²:\n")
-                f.write(f"  Saliency + Memory: {unique_variance['r2_sal_mem']:.3f}\n")
-                f.write(f"  Saliency + EoR: {unique_variance['r2_sal_eor']:.3f}\n")
-                f.write(f"  Memory + EoR: {unique_variance['r2_mem_eor']:.3f}\n")
-                f.write(f"\nThree-way Combined R²: {unique_variance['r2_combined']:.3f}\n")
-                f.write(f"\nUnique variance (beyond other two):\n")
-                f.write(f"  Saliency: {unique_variance['unique_saliency']:.3f}\n")
-                f.write(f"  Memory: {unique_variance['unique_memory']:.3f}\n")
-                f.write(f"  EoR: {unique_variance['unique_eor']:.3f}\n")
-            else:
-                f.write(f"\nCombined R²: {unique_variance['r2_combined']:.3f}\n")
-                f.write(f"Unique variance - Saliency: {unique_variance['unique_saliency']:.3f}\n")
-                f.write(f"Unique variance - Memory: {unique_variance['unique_memory']:.3f}\n")
-                if 'shared_variance' in unique_variance:
-                    f.write(f"Shared variance: {unique_variance['shared_variance']:.3f}\n")
+        if variance_results:
+            f.write("\nVARIANCE PARTITIONING RESULTS:\n")
+            f.write(f"Total Explained: {variance_results['total_explained']*100:.2f}%\n")
+            f.write(f"Unexplained: {variance_results['unexplained']*100:.2f}%\n")
+            
+            f.write(f"\nIndividual R²:\n")
+            f.write(f"  Saliency: {variance_results['r2_A']*100:.2f}%\n")
+            f.write(f"  Memorability: {variance_results['r2_B']*100:.2f}%\n")
+            f.write(f"  Ease-of-Recognition: {variance_results['r2_C']*100:.2f}%\n")
+            
+            f.write(f"\nPairwise R²:\n")
+            f.write(f"  Saliency + Memorability: {variance_results['r2_AB']*100:.2f}%\n")
+            f.write(f"  Saliency + EoR: {variance_results['r2_AC']*100:.2f}%\n")
+            f.write(f"  Memorability + EoR: {variance_results['r2_BC']*100:.2f}%\n")
+            
+            f.write(f"\nUnique Variance:\n")
+            f.write(f"  Saliency: {variance_results['unique_A']*100:.2f}%\n")
+            f.write(f"  Memorability: {variance_results['unique_B']*100:.2f}%\n")
+            f.write(f"  Ease-of-Recognition: {variance_results['unique_C']*100:.2f}%\n")
+            
+        
 
     print(f"Results saved to: {results_path}")
     print("\nAnalysis complete!")
