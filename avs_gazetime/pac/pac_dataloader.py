@@ -118,13 +118,14 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
             rollback_shift = cumulative_shift - n_shifts_saccade
             meg_data = np.array([np.roll(meg_data[i], rollback_shift[i], axis=-1) for i in range(meg_data.shape[0])])
 
+        # Set appropriate duration column
+        dur_col = "associated_fixation_duration"
+
         # Remove events without associated fixation duration
-        valid_fixation_mask = ~np.isnan(merged_df["associated_fixation_duration"])
+        valid_fixation_mask = ~np.isnan(merged_df[dur_col])
         merged_df = merged_df[valid_fixation_mask]
         meg_data = meg_data[valid_fixation_mask]
 
-        # Set appropriate duration column
-        dur_col = "associated_fixation_duration"
     else:
         # Load metadata for the specified event type
         merged_df = load_data.merge_meta_df(event_type)
@@ -134,7 +135,7 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
 
         # Set appropriate duration column
         dur_col = "duration" if event_type == "fixation" else "associated_fixation_duration"
-    
+
     # Filter by duration to remove outliers
     longest_dur = np.percentile(merged_df[dur_col], 98)
     shortest_dur = np.percentile(merged_df[dur_col], 2)
