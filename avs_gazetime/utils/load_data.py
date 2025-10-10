@@ -374,7 +374,7 @@ def match_saccades_to_fixations_extended(
 
     for sceneID in matched_df["sceneID"].unique():
         scene_group = combined_df[combined_df["sceneID"] == sceneID]
-        sorted_group = scene_group.sort_values(by="start_time")
+        sorted_group = scene_group.sort_values(by="start_time").reset_index(drop=True)
 
         # Get matched saccades in this scene
         scene_matched = matched_df[matched_df["sceneID"] == sceneID]
@@ -382,18 +382,15 @@ def match_saccades_to_fixations_extended(
         for idx, saccade_row in scene_matched.iterrows():
             # Find this saccade in the sorted group by matching start_time and type
             saccade_start_time = saccade_row["start_time"]
-            matching_saccades = sorted_group[
-                (sorted_group["type"] == "saccade") &
-                (sorted_group["start_time"] == saccade_start_time)
-            ]
 
-            if len(matching_saccades) == 0:
+            # Find position using boolean mask and where
+            mask = (sorted_group["type"] == "saccade") & (sorted_group["start_time"] == saccade_start_time)
+            positions = np.where(mask)[0]
+
+            if len(positions) == 0:
                 continue
 
-            saccade_idx = matching_saccades.index[0]
-
-            # Get position in sorted group
-            position = sorted_group.index.get_loc(saccade_idx)
+            position = positions[0]  # Take first match if multiple
 
             # Look ahead for subsequent events (pre-saccade case)
             # Current: saccade -> fixation
