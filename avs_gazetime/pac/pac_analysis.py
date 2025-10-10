@@ -74,15 +74,38 @@ def main():
         surrogate_style = SURROGATE_STYLE  # Using the parameter from params_pac
         
         print(f"Using surrogate style: {surrogate_style}")
-        
+
+        # Pre-filter all data once before the channel loop (major speedup)
+        print("Pre-filtering all channels for theta and gamma bands...")
+        from mne.filter import filter_data
+
+        theta_data_all = filter_data(
+            meg_data.astype(float), 500,
+            theta_band[0], theta_band[1],
+            method='fir', phase='minimum',
+            n_jobs=parallel_jobs["filter"],
+            verbose=0
+        )
+        print(f"Theta filtering complete. Shape: {theta_data_all.shape}")
+
+        gamma_data_all = filter_data(
+            meg_data.astype(float), 500,
+            gamma_band[0], gamma_band[1],
+            method='fir', phase='minimum',
+            n_jobs=parallel_jobs["filter"],
+            verbose=0
+        )
+        print(f"Gamma filtering complete. Shape: {gamma_data_all.shape}")
+
         # Compute PAC values for all channels in parallel
         channel_indices = range(meg_data.shape[1])
         pac_per_channel = Parallel(n_jobs=parallel_jobs["pac_computation"])(
             delayed(compute_pac_hilbert)(
-                meg_data, 500, channel, theta_band=theta_band, gamma_band=gamma_band, 
-                times=times, time_window=time_window, n_bootstraps=200, 
+                None, 500, channel, theta_band=theta_band, gamma_band=gamma_band,
+                times=times, time_window=time_window, n_bootstraps=200,
                 plot=False, verbose=False, durations=merged_df[dur_col].values,
-                method=PAC_METHOD, sessions=sessions, surrogate_style=surrogate_style
+                method=PAC_METHOD, sessions=sessions, surrogate_style=surrogate_style,
+                theta_data_prefiltered=theta_data_all, gamma_data_prefiltered=gamma_data_all
             ) for channel in tqdm(channel_indices, desc="Computing PAC per channel", unit="channel")
         )
         

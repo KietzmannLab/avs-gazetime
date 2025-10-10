@@ -276,17 +276,19 @@ def compute_single_cut_bootstrap(theta_phase, gamma_amplitude, pac_function, n_b
     return baseline_bootstrap
 
 #@simple_timer
-def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60, 140), 
-                       times=None, time_window=(0.150, 0.400), n_bootstraps=200, 
-                       plot=False, verbose=True, durations=None, 
+def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60, 140),
+                       times=None, time_window=(0.150, 0.400), n_bootstraps=200,
+                       plot=False, verbose=True, durations=None,
                        method='modulation_index', sessions=None, random_seed=42,
-                       surrogate_style='phase_shuffle'):
+                       surrogate_style='phase_shuffle', theta_data_prefiltered=None,
+                       gamma_data_prefiltered=None):
     """
     Compute phase-amplitude coupling using the Hilbert transform for a specific channel.
-    
+
     Parameters:
     - data: np.ndarray
         The MEG/EEG data array of shape (n_epochs, n_channels, n_times).
+        Only used if theta_data_prefiltered and gamma_data_prefiltered are None.
     - sfreq: float
         The sampling frequency of the data.
     - channel: int
@@ -315,6 +317,12 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
         Seed for random number generator to ensure reproducibility.
     - surrogate_style: str
         Method to generate surrogate data ('phase_shuffle', 'session_aware', or 'single_cut').
+    - theta_data_prefiltered: np.ndarray or None
+        Pre-filtered theta data of shape (n_epochs, n_channels, n_times). If provided,
+        skips filtering step for theta band.
+    - gamma_data_prefiltered: np.ndarray or None
+        Pre-filtered gamma data of shape (n_epochs, n_channels, n_times). If provided,
+        skips filtering step for gamma band.
 
     Returns:
     - z_scores: float
@@ -343,20 +351,30 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
         
     if verbose:
         print(theta_band, gamma_band)
-        print(data.shape)
-    
-    tic("filter theta")
-    # Filter data for theta and gamma bands (causal filter, minimum phase)
-    theta_data = filter_data(data[:, channel, :].astype(float), sfreq, 
-                           theta_band[0], theta_band[1], 
-                           method='fir', phase='minimum', n_jobs=PARALLEL_JOBS["filter"], verbose=0)
-    toc("filter theta")
-    
-    tic("filter gamma")
-    gamma_data = filter_data(data[:, channel, :].astype(float), sfreq, 
-                           gamma_band[0], gamma_band[1], 
-                           method='fir', phase='minimum', n_jobs=PARALLEL_JOBS["filter"], verbose=0)
-    toc("filter gamma")
+        if data is not None:
+            print(data.shape)
+
+    # Use pre-filtered data if provided, otherwise filter now
+    if theta_data_prefiltered is not None and gamma_data_prefiltered is not None:
+        if verbose:
+            print(f"Using pre-filtered data for channel {channel}")
+        theta_data = theta_data_prefiltered[:, channel, :]
+        gamma_data = gamma_data_prefiltered[:, channel, :]
+    else:
+        if verbose:
+            print(f"Filtering data for channel {channel}")
+        tic("filter theta")
+        # Filter data for theta and gamma bands (causal filter, minimum phase)
+        theta_data = filter_data(data[:, channel, :].astype(float), sfreq,
+                               theta_band[0], theta_band[1],
+                               method='fir', phase='minimum', n_jobs=PARALLEL_JOBS["filter"], verbose=0)
+        toc("filter theta")
+
+        tic("filter gamma")
+        gamma_data = filter_data(data[:, channel, :].astype(float), sfreq,
+                               gamma_band[0], gamma_band[1],
+                               method='fir', phase='minimum', n_jobs=PARALLEL_JOBS["filter"], verbose=0)
+        toc("filter gamma")
     
     if verbose:
         print(f"Theta data shape: {theta_data.shape}, Gamma data shape: {gamma_data.shape}")
