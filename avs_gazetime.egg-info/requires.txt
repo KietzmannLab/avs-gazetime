@@ -1,0 +1,15 @@
+mne
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+scikit-learn
+joblib
+tqdm
+pyyaml
+pyproj
+pyvista
+pyvistaqt
+pathlib
+avs_machine_room

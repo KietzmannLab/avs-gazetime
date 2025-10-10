@@ -39,9 +39,9 @@ def configure_run(subject_id=None, ch_type="mag", sensor_selection="fixation", d
     _, et_dir, project_dir = avs_directory.get_data_dirs(server="uos", add_project_dir=True)
     print(f"project_dir: {project_dir}")
     plots_dir_behav = os.path.join(os.sep+"share", "klab", "psulewski", "psulewski", "active-visual-semantics-MEG", "results", "fullrun",
-                             'analysis', 'gazetime',"submission_checks","behav")
+                             'analysis', 'gazetime',"revision_nature","behav")
     plots_dir_no_sub = os.path.join(os.sep+"share", "klab", "psulewski", "psulewski", "active-visual-semantics-MEG", "results", "fullrun",
-                             'analysis', 'gazetime',"submission_checks","ica",out_key,"filter_0.2_200")
+                             'analysis', 'gazetime',"revision_nature","ica",out_key,"filter_0.2_200")
     plots_dir = os.path.join(plots_dir_no_sub, subject)
     
     subjects_dir = os.path.join(os.sep+"share", "klab", "datasets", "avs", "rawdir")
@@ -77,7 +77,7 @@ try:
     print(f"subject_id: {subject_id}")
     debug = False
 except KeyError:
-    subject_id = 5
+    subject_id = 4
     print("subject_id not found in environment variables")
     # set sebug to True
     debug = False
@@ -85,7 +85,7 @@ try:
     ch_type = os.environ["CH_TYPE_GAZETIME"]
     print(f"ch_type: {ch_type}")
 except KeyError:
-    ch_type = "stc" # TODO: make None again
+    ch_type = "mag" # TODO: make None again
     print("ch_type not found in environment variables")
 
 try:

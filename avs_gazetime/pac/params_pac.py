@@ -1,12 +1,12 @@
-QUANTILES = 20 # 80
+QUANTILES = 80 # 80
 EVENT_TYPE = "saccade"
 TIME_WINDOW =(0.150, 0.400) # in seconds
 THETA_BAND =(3, 8)
 GAMMA_BAND =(40, 140)
 PAC_METHOD = "modulation_index" #"pac_ozkurt", #"circular_linear_correlation"
 PHASE_OR_POWER = "power"
-DECIM = 4
-remove_erfs = ["saccade","fixation"] # "saccade",
+DECIM = 1
+remove_erfs = ["saccade","fixation","saccade_post"]
 # surrogate data generation method
 SURROGATE_STYLE = "single_cut"  # Options: "phase_shuffle", "session_aware", "single_cut"
 N_BOOTSTRAPS = 200

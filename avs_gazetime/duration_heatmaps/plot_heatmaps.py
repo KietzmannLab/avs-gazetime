@@ -36,7 +36,8 @@ from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.metrics import r2_score
 from tqdm import tqdm
 
-from params_theta import (QUANTILES, EVENT_TYPE, BANDS as bands, DECIM as decim, MEM_SCORE_TYPE, PHASE_OR_POWER, remove_erfs)
+from avs_gazetime.pac.params_pac import (QUANTILES, EVENT_TYPE, DECIM as decim, PHASE_OR_POWER, remove_erfs)
+print(decim, PHASE_OR_POWER, remove_erfs)
 from sklearn.model_selection import GroupShuffleSplit
 
 import fracridge
@@ -175,13 +176,14 @@ def plot_heatmap(meg_data, offsets, times, output_dir, event_type, subject, chan
     
     if not os.path.exists(os.path.join(output_dir, "heatmaps")):
         os.makedirs(os.path.join(output_dir, "heatmaps"))
-    fname = f"epoch_heatmap_{event_type}_{subject}_{channel}_binned_{binned}_{band_name}"
+    fname = f"epoch_heatmap_{event_type}_{subject}_{CH_TYPE}_{channel}_binned_{binned}_{band_name}"
     if PHASE_OR_POWER == "phase":
-        fname = f"epoch_heatmap_{event_type}_{subject}_{channel}_binned_{binned}_{band_name}_phase"
+        fname = fname + "_phase"
     # plot the offsets
     
     fig.savefig(os.path.join(output_dir, "heatmaps", fname + ".png"), transparent=False)
     #fig.savefig(os.path.join(output_dir, "heatmaps", fname + ".pdf"))
+    print("Saved figure to", os.path.join(output_dir, "heatmaps", fname + ".png"))
     return
 
 def freq_avg(data, method, axis=0):
@@ -227,7 +229,9 @@ if __name__ == "__main__":
         channel_chunk = None 
     print("Processing channel chunk", channel_chunk)
     #assert CH_TYPE == "mag" # only mag for now
-    
+    bands = {
+        "raw": (0, 0),
+    }
     if CH_TYPE == "stc" and channel_chunk is not None:
         
     #  check available channels
@@ -246,7 +250,7 @@ if __name__ == "__main__":
     else:
     
         channels = [None]
-        
+    
     if remove_erfs:
         merged_df_saccade = load_data.merge_meta_df("saccade")
         # combine the dataframes
@@ -256,8 +260,8 @@ if __name__ == "__main__":
     print(channels)
     # iterate over the channels
     for channel_idx in channels:
-            
-        if remove_erfs:
+        
+        if len(remove_erfs) > 0:
             meg_data = load_data.process_meg_data_for_roi(CH_TYPE, "saccade", SESSIONS, apply_median_scale=True, channel_idx=channel_idx)
             
             # apply the index mask to the meg data
@@ -325,7 +329,7 @@ if __name__ == "__main__":
         # this is a bit of a clumsy way to get the duration_pre, but it works for now
         #print(merged_df.columns)
         dur_col = "duration" if EVENT_TYPE == "fixation" else "associated_fixation_duration"
-        
+        print(dur_col)
         
         
         print(len(merged_df), meg_data.shape)
@@ -378,7 +382,7 @@ if __name__ == "__main__":
         else:
             binned = False
                 
-    
+  
         for band_name, tf_band in bands.items():
             
         
