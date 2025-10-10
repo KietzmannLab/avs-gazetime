@@ -36,11 +36,20 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
         Timepoints corresponding to the MEG data.
     """
     # Load the appropriate metadata based on event type
-    if remove_erfs and 'saccade' in remove_erfs:
+    if remove_erfs and len(remove_erfs) > 0:
         # Load both fixation and saccade data for alignment
         merged_df_saccade = load_data.merge_meta_df("saccade")
         merged_df_fixation = load_data.merge_meta_df("fixation")
-        merged_df = load_data.match_saccades_to_fixations(merged_df_fixation, merged_df_saccade, saccade_type="pre-saccade")
+
+        # Use extended matching if fixation_post is requested
+        if "fixation_post" in remove_erfs:
+            merged_df = load_data.match_saccades_to_fixations_extended(
+                merged_df_saccade, merged_df_fixation, saccade_type="pre-saccade"
+            )
+        else:
+            merged_df = load_data.match_saccades_to_fixations(
+                merged_df_saccade, merged_df_fixation, saccade_type="pre-saccade"
+            )
 
         # Load MEG data for saccades
         meg_data = load_data.process_meg_data_for_roi(ch_type, "saccade", sessions, apply_median_scale=True, channel_idx=channel_idx)
@@ -51,44 +60,63 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
         # Reset index after masking
         merged_df.reset_index(drop=True, inplace=True)
 
-        # Remove saccade ERF if specified
-        if "saccade" in remove_erfs:
-            print("Removing saccade ERF")
-            sacc_erf = np.median(meg_data, axis=0)
-            meg_data = meg_data - sacc_erf
+        # ERF removal sequence: Start at saccade onset, end at fixation onset
+        # We progressively roll forward through events, removing ERFs, then roll back
 
         # Calculate sampling frequency for time shifting
         S_FREQ = 500  # Sampling frequency in Hz
 
-        # Get saccade durations and calculate shifts
+        # Get all durations upfront
         saccade_duration = merged_df["duration"].values
-        n_shifts_per_event = (saccade_duration * S_FREQ).astype(int)
+        fixation_duration = merged_df["associated_fixation_duration"].values
 
-        # Shift data to align with fixation onset
-        meg_data = np.array([np.roll(meg_data[i], -n_shifts_per_event[i], axis=-1) for i in range(meg_data.shape[0])])
+        # Track cumulative shift from saccade onset
+        cumulative_shift = np.zeros(len(merged_df), dtype=int)
 
-        # Remove fixation ERF if specified
+        # 1. Remove saccade ERF at saccade onset (t=0)
+        if "saccade" in remove_erfs:
+            print("Removing saccade ERF at saccade onset")
+            sacc_erf = np.median(meg_data, axis=0)
+            meg_data = meg_data - sacc_erf
+
+        # 2. Roll forward to fixation onset
+        n_shifts_saccade = (saccade_duration * S_FREQ).astype(int)
+        meg_data = np.array([np.roll(meg_data[i], -n_shifts_saccade[i], axis=-1) for i in range(meg_data.shape[0])])
+        cumulative_shift += n_shifts_saccade
+
+        # 3. Remove fixation ERF at fixation onset
         if "fixation" in remove_erfs:
-            print("Removing fixation ERF")
+            print("Removing fixation ERF at fixation onset")
             fix_erf = np.median(meg_data, axis=0)
             meg_data = meg_data - fix_erf
 
-        # Remove post-saccade ERF if specified (subsequent saccade)
+        # 4. Roll forward to subsequent saccade onset (if needed)
         if "saccade_post" in remove_erfs:
-            print("Removing post-saccade ERF (subsequent saccade)")
-            # Get fixation durations to roll backwards to subsequent saccade onset
-            fixation_durations = merged_df["associated_fixation_duration"].values
-            n_shifts_fixation = (fixation_durations * S_FREQ).astype(int)
+            n_shifts_fixation = (fixation_duration * S_FREQ).astype(int)
+            meg_data = np.array([np.roll(meg_data[i], -n_shifts_fixation[i], axis=-1) for i in range(meg_data.shape[0])])
+            cumulative_shift += n_shifts_fixation
 
-            # Roll backwards by fixation duration to align to subsequent saccade onset
-            meg_data_rolled = np.array([np.roll(meg_data[i], -n_shifts_fixation[i], axis=-1) for i in range(meg_data.shape[0])])
+            print("Removing post-saccade ERF at subsequent saccade onset")
+            post_sacc_erf = np.median(meg_data, axis=0)
+            meg_data = meg_data - post_sacc_erf
 
-            # Remove the post-saccade ERF
-            post_sacc_erf = np.median(meg_data_rolled, axis=0)
-            meg_data_rolled = meg_data_rolled - post_sacc_erf
+        # 5. Roll forward to subsequent fixation onset (if needed)
+        if "fixation_post" in remove_erfs:
+            subsequent_saccade_duration = merged_df["subsequent_saccade_duration"].values
+            n_shifts_saccade_post = (subsequent_saccade_duration * S_FREQ).astype(int)
+            meg_data = np.array([np.roll(meg_data[i], -n_shifts_saccade_post[i], axis=-1) for i in range(meg_data.shape[0])])
+            cumulative_shift += n_shifts_saccade_post
 
-            # Roll forward to get back to fixation onset
-            meg_data = np.array([np.roll(meg_data_rolled[i], n_shifts_fixation[i], axis=-1) for i in range(meg_data_rolled.shape[0])])
+            print("Removing post-fixation ERF at subsequent fixation onset")
+            post_fix_erf = np.median(meg_data, axis=0)
+            meg_data = meg_data - post_fix_erf
+
+        # 6. Roll back to fixation onset for analysis
+        if "saccade_post" in remove_erfs or "fixation_post" in remove_erfs:
+            print(f"Rolling back to fixation onset")
+            # We want to be at fixation onset, so roll back everything except the initial saccade shift
+            rollback_shift = cumulative_shift - n_shifts_saccade
+            meg_data = np.array([np.roll(meg_data[i], rollback_shift[i], axis=-1) for i in range(meg_data.shape[0])])
 
         # Remove events without associated fixation duration
         valid_fixation_mask = ~np.isnan(merged_df["associated_fixation_duration"])
