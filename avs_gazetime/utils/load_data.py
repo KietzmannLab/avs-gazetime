@@ -322,6 +322,109 @@ def match_saccades_to_fixations(
     return selected_saccades_df
 
 
+def match_saccades_to_fixations_extended(
+    saccades_meta_df, fixations_meta_df, saccade_type="pre-saccade"
+):
+    """
+    Extended matching that captures full temporal sequence for 4-fold ERF removal.
+
+    For each saccade, this adds information about subsequent events:
+    - associated_fixation_duration: duration of the associated fixation (from base function)
+    - subsequent_saccade_duration: duration of the saccade after the associated fixation
+    - subsequent_fixation_duration: duration of the fixation after the subsequent saccade
+
+    This enables removal of 4 ERFs:
+    1. Current saccade ERF (at saccade onset, t=0)
+    2. Associated fixation ERF (after rolling by saccade duration)
+    3. Subsequent saccade ERF (after rolling by saccade + fixation duration)
+    4. Subsequent fixation ERF (after rolling by saccade + fixation + saccade duration)
+
+    Parameters:
+    -----------
+    saccades_meta_df : pd.DataFrame
+        Metadata for saccades
+    fixations_meta_df : pd.DataFrame
+        Metadata for fixations
+    saccade_type : str
+        "pre-saccade" only (post-saccade not yet implemented for extended matching)
+
+    Returns:
+    --------
+    pd.DataFrame : Extended saccade metadata with temporal sequence information
+    """
+    if saccade_type != "pre-saccade":
+        raise NotImplementedError("Extended matching currently only supports saccade_type='pre-saccade'")
+
+    # Start with the existing matching
+    matched_df = match_saccades_to_fixations(
+        saccades_meta_df, fixations_meta_df, saccade_type
+    )
+
+    print(f"\n=== Extended matching for 4-fold ERF removal ===")
+    print(f"Initial matched saccades: {len(matched_df)}")
+
+    # Combine for temporal sorting
+    combined_df = pd.concat([fixations_meta_df, saccades_meta_df], axis=0)
+
+    # Initialize new columns
+    matched_df["subsequent_saccade_duration"] = np.nan
+    matched_df["subsequent_fixation_duration"] = np.nan
+
+    selected_rows = []
+
+    for sceneID in matched_df["sceneID"].unique():
+        scene_group = combined_df[combined_df["sceneID"] == sceneID]
+        sorted_group = scene_group.sort_values(by="start_time")
+
+        # Get matched saccades in this scene
+        scene_matched = matched_df[matched_df["sceneID"] == sceneID]
+
+        for idx, saccade_row in scene_matched.iterrows():
+            # Find this saccade in the sorted group by matching start_time and type
+            saccade_start_time = saccade_row["start_time"]
+            matching_saccades = sorted_group[
+                (sorted_group["type"] == "saccade") &
+                (sorted_group["start_time"] == saccade_start_time)
+            ]
+
+            if len(matching_saccades) == 0:
+                continue
+
+            saccade_idx = matching_saccades.index[0]
+
+            # Get position in sorted group
+            position = sorted_group.index.get_loc(saccade_idx)
+
+            # Look ahead for subsequent events (pre-saccade case)
+            # Current: saccade -> fixation
+            # Need to find: fixation -> saccade -> fixation (next 3 events)
+            if position + 3 < len(sorted_group):
+                next_fix = sorted_group.iloc[position + 1]  # Associated fixation
+                next_sacc = sorted_group.iloc[position + 2]  # Subsequent saccade
+                next_next_fix = sorted_group.iloc[position + 3]  # Subsequent fixation
+
+                if (next_fix["type"] == "fixation" and
+                    next_sacc["type"] == "saccade" and
+                    next_next_fix["type"] == "fixation"):
+
+                    row_data = saccade_row.to_dict()
+                    row_data["subsequent_saccade_duration"] = next_sacc["duration"]
+                    row_data["subsequent_fixation_duration"] = next_next_fix["duration"]
+                    selected_rows.append(row_data)
+
+    # Create new dataframe with extended information
+    if len(selected_rows) == 0:
+        print("Warning: No saccades with complete temporal sequence found!")
+        return pd.DataFrame()
+
+    extended_df = pd.DataFrame(selected_rows)
+
+    print(f"Saccades with complete temporal sequence: {len(extended_df)}")
+    print(f"Filtered out {len(matched_df) - len(extended_df)} saccades without full sequence")
+
+    return extended_df
+
+
 def get_idx_saccade_onset(timepoints=None, EVENT_TYPE=None):
     """
     Get the index of the saccade onset from the given timepoints.
