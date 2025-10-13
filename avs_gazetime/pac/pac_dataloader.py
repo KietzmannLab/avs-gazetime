@@ -157,14 +157,21 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
     
     return meg_data, merged_df, times
 
-def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_size=100):
+def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_size=100,
+                                 balance_epochs=True, match_duration_distribution=True, dur_col="duration"):
     """
     Split epochs into high/low memorability groups based on memorability scores.
+
+    This function performs balanced epoch selection to control for confounds:
+    1. Ensures equal number of epochs in high/low groups
+    2. Optionally matches duration distributions between groups
+
+    This controls for the confound that longer fixations may have different memorability scores.
 
     Parameters:
     -----------
     merged_df : pd.DataFrame
-        Metadata for the epochs.
+        Metadata for the epochs (should already be duration-filtered).
     meg_data : np.ndarray
         MEG data array of shape (n_epochs, n_channels, n_times).
     mem_split : str or None
@@ -173,6 +180,13 @@ def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_s
         If None, returns all data as a single group.
     mem_crop_size : int
         Crop size in pixels for memorability analysis (must match precomputed scores).
+    balance_epochs : bool
+        If True, downsample to ensure equal number of epochs in each group.
+    match_duration_distribution : bool
+        If True, use stratified sampling to match duration distributions between groups.
+        Requires balance_epochs=True.
+    dur_col : str
+        Name of duration column to use for distribution matching.
 
     Returns:
     --------
@@ -233,22 +247,103 @@ def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_s
     # Split the data
     results = []
 
-    # Low memorability group
-    low_df = merged_df_with_mem[low_mask].reset_index(drop=True)
-    low_meg = meg_data[low_mask]
-    results.append(("low_mem", low_meg, low_df))
-    print(f"  Low memorability group: {len(low_df)} epochs (mem_score ≤ {low_threshold:.3f})")
+    # Get initial groups
+    low_df = merged_df_with_mem[low_mask].copy()
+    high_df = merged_df_with_mem[high_mask].copy()
 
-    # High memorability group
-    high_df = merged_df_with_mem[high_mask].reset_index(drop=True)
-    high_meg = meg_data[high_mask]
-    results.append(("high_mem", high_meg, high_df))
-    print(f"  High memorability group: {len(high_df)} epochs (mem_score ≥ {high_threshold:.3f})")
+    print(f"  Initial low memorability group: {len(low_df)} epochs (mem_score ≤ {low_threshold:.3f})")
+    print(f"  Initial high memorability group: {len(high_df)} epochs (mem_score ≥ {high_threshold:.3f})")
 
     # Report excluded middle range
     n_excluded = len(merged_df_with_mem) - len(low_df) - len(high_df)
     if n_excluded > 0:
         print(f"  Excluded middle range: {n_excluded} epochs ({low_threshold:.3f} < mem_score < {high_threshold:.3f})")
+
+    # Balance epochs between groups if requested
+    if balance_epochs and len(low_df) > 0 and len(high_df) > 0:
+        print(f"\n  Balancing epoch counts between groups...")
+
+        # Determine target count (minimum of the two groups)
+        n_target = min(len(low_df), len(high_df))
+        print(f"    Target count per group: {n_target} epochs")
+
+        if match_duration_distribution:
+            print(f"    Using stratified sampling to match duration distributions...")
+
+            # Create duration bins for stratification (quintiles)
+            n_bins = 5
+            all_durations = pd.concat([low_df[dur_col], high_df[dur_col]])
+            duration_bins = pd.qcut(all_durations, q=n_bins, labels=False, duplicates='drop')
+            n_bins_actual = len(np.unique(duration_bins))
+
+            # Assign bins to each group
+            low_df['_duration_bin'] = pd.qcut(low_df[dur_col], q=n_bins, labels=False, duplicates='drop')
+            high_df['_duration_bin'] = pd.qcut(high_df[dur_col], q=n_bins, labels=False, duplicates='drop')
+
+            # Sample from each group to match target count and distribution
+            def stratified_sample(df, n_target, random_state=42):
+                """Sample to target count while preserving duration distribution."""
+                sampled_indices = []
+                bin_counts = df['_duration_bin'].value_counts()
+
+                for bin_id in sorted(df['_duration_bin'].unique()):
+                    bin_df = df[df['_duration_bin'] == bin_id]
+                    # Proportional sample from this bin
+                    n_from_bin = int(np.round(n_target * len(bin_df) / len(df)))
+                    n_from_bin = min(n_from_bin, len(bin_df))  # Don't exceed available
+
+                    if n_from_bin > 0:
+                        sampled = bin_df.sample(n=n_from_bin, random_state=random_state)
+                        sampled_indices.extend(sampled.index.tolist())
+
+                # If we're short of target, randomly sample remaining
+                if len(sampled_indices) < n_target:
+                    remaining = df.loc[~df.index.isin(sampled_indices)]
+                    n_additional = min(n_target - len(sampled_indices), len(remaining))
+                    additional = remaining.sample(n=n_additional, random_state=random_state)
+                    sampled_indices.extend(additional.index.tolist())
+
+                # If we're over target, randomly remove excess
+                if len(sampled_indices) > n_target:
+                    np.random.seed(random_state)
+                    sampled_indices = np.random.choice(sampled_indices, size=n_target, replace=False).tolist()
+
+                return df.loc[sampled_indices]
+
+            low_df_balanced = stratified_sample(low_df, n_target, random_state=42)
+            high_df_balanced = stratified_sample(high_df, n_target, random_state=43)
+
+            # Remove temporary column
+            low_df_balanced = low_df_balanced.drop(columns=['_duration_bin'])
+            high_df_balanced = high_df_balanced.drop(columns=['_duration_bin'])
+
+            # Report duration statistics
+            print(f"    Duration statistics after balancing:")
+            print(f"      Low group:  mean={low_df_balanced[dur_col].mean():.3f}s, std={low_df_balanced[dur_col].std():.3f}s")
+            print(f"      High group: mean={high_df_balanced[dur_col].mean():.3f}s, std={high_df_balanced[dur_col].std():.3f}s")
+
+        else:
+            # Simple random sampling without duration matching
+            print(f"    Using simple random sampling...")
+            low_df_balanced = low_df.sample(n=n_target, random_state=42)
+            high_df_balanced = high_df.sample(n=n_target, random_state=43)
+
+        # Update to use balanced versions
+        low_df = low_df_balanced.reset_index(drop=True)
+        high_df = high_df_balanced.reset_index(drop=True)
+
+        print(f"  Final balanced counts: Low={len(low_df)}, High={len(high_df)}")
+
+    # Get MEG data for selected epochs
+    low_meg = meg_data[low_df.index.values]
+    high_meg = meg_data[high_df.index.values]
+
+    # Reset indices
+    low_df = low_df.reset_index(drop=True)
+    high_df = high_df.reset_index(drop=True)
+
+    results.append(("low_mem", low_meg, low_df))
+    results.append(("high_mem", high_meg, high_df))
 
     return results
 

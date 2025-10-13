@@ -79,7 +79,14 @@ def main():
         print(f"\n{'='*60}")
         print(f"Memorability split configuration: {MEM_SPLIT}")
         print(f"{'='*60}")
-        epoch_splits = split_epochs_by_memorability(merged_df, meg_data, mem_split=MEM_SPLIT, mem_crop_size=MEM_CROP_SIZE)
+        epoch_splits = split_epochs_by_memorability(
+            merged_df, meg_data,
+            mem_split=MEM_SPLIT,
+            mem_crop_size=MEM_CROP_SIZE,
+            balance_epochs=True,
+            match_duration_distribution=True,
+            dur_col=dur_col
+        )
 
         # Store all PAC results across splits
         all_pac_results = []
