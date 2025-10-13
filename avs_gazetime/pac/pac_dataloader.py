@@ -157,6 +157,101 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
     
     return meg_data, merged_df, times
 
+def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_size=100):
+    """
+    Split epochs into high/low memorability groups based on memorability scores.
+
+    Parameters:
+    -----------
+    merged_df : pd.DataFrame
+        Metadata for the epochs.
+    meg_data : np.ndarray
+        MEG data array of shape (n_epochs, n_channels, n_times).
+    mem_split : str or None
+        Split specification like "50/50" or "25/25".
+        Format: "bottom_percent/top_percent"
+        If None, returns all data as a single group.
+    mem_crop_size : int
+        Crop size in pixels for memorability analysis (must match precomputed scores).
+
+    Returns:
+    --------
+    list of tuples: [(split_name, meg_data_subset, merged_df_subset), ...]
+        If mem_split is None: [("all", full_data, full_df)]
+        If mem_split="50/50": [("low_mem", bottom_50%, ...), ("high_mem", top_50%, ...)]
+    """
+    if mem_split is None:
+        print("No memorability split requested - using all epochs")
+        return [("all", meg_data, merged_df)]
+
+    print(f"Splitting epochs by memorability: {mem_split}")
+
+    # Parse the split specification
+    try:
+        bottom_pct, top_pct = map(int, mem_split.split("/"))
+    except ValueError:
+        raise ValueError(f"Invalid mem_split format: '{mem_split}'. Expected format: 'bottom/top' (e.g., '50/50', '25/25')")
+
+    # Load memorability scores
+    from avs_gazetime.memorability.mem_tools import get_memorability_scores
+
+    # Get subject ID from dataframe
+    subject_id = merged_df["subject"].iloc[0]
+
+    print(f"Loading memorability scores for subject {subject_id} with crop size {mem_crop_size}...")
+
+    # Add memorability scores to metadata
+    merged_df_with_mem = get_memorability_scores(
+        merged_df.copy(),
+        subject_id,
+        targets=["memorability"],
+        model_task="regression",
+        crop_size_pix=mem_crop_size
+    )
+
+    # Check for missing memorability scores
+    n_missing = merged_df_with_mem["mem_score"].isna().sum()
+    if n_missing > 0:
+        print(f"WARNING: {n_missing} epochs missing memorability scores - excluding from split")
+        valid_mask = ~merged_df_with_mem["mem_score"].isna()
+        merged_df_with_mem = merged_df_with_mem[valid_mask].reset_index(drop=True)
+        meg_data = meg_data[valid_mask]
+
+    # Calculate percentile thresholds
+    mem_scores = merged_df_with_mem["mem_score"].values
+    low_threshold = np.percentile(mem_scores, bottom_pct)
+    high_threshold = np.percentile(mem_scores, 100 - top_pct)
+
+    print(f"Memorability score range: [{np.min(mem_scores):.3f}, {np.max(mem_scores):.3f}]")
+    print(f"Low threshold (bottom {bottom_pct}%): {low_threshold:.3f}")
+    print(f"High threshold (top {top_pct}%): {high_threshold:.3f}")
+
+    # Create masks
+    low_mask = mem_scores <= low_threshold
+    high_mask = mem_scores >= high_threshold
+
+    # Split the data
+    results = []
+
+    # Low memorability group
+    low_df = merged_df_with_mem[low_mask].reset_index(drop=True)
+    low_meg = meg_data[low_mask]
+    results.append(("low_mem", low_meg, low_df))
+    print(f"  Low memorability group: {len(low_df)} epochs (mem_score ≤ {low_threshold:.3f})")
+
+    # High memorability group
+    high_df = merged_df_with_mem[high_mask].reset_index(drop=True)
+    high_meg = meg_data[high_mask]
+    results.append(("high_mem", high_meg, high_df))
+    print(f"  High memorability group: {len(high_df)} epochs (mem_score ≥ {high_threshold:.3f})")
+
+    # Report excluded middle range
+    n_excluded = len(merged_df_with_mem) - len(low_df) - len(high_df)
+    if n_excluded > 0:
+        print(f"  Excluded middle range: {n_excluded} epochs ({low_threshold:.3f} < mem_score < {high_threshold:.3f})")
+
+    return results
+
 def get_channel_chunks(ch_type, event_type, channel_chunk=None):
     """
     Get channel chunks for processing.

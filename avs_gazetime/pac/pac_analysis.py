@@ -12,7 +12,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 # Import custom modules
-from pac_dataloader import load_meg_data, get_channel_chunks
+from pac_dataloader import load_meg_data, get_channel_chunks, split_epochs_by_memorability
 from pac_functions import compute_pac_hilbert, compute_full_cross_frequency_pac_matrix
 
 # Import configuration
@@ -26,9 +26,10 @@ from avs_gazetime.config import (
 
 from params_pac import (
     QUANTILES, EVENT_TYPE, DECIM,
-    PHASE_OR_POWER, remove_erfs, 
+    PHASE_OR_POWER, remove_erfs,
     TIME_WINDOW, THETA_BAND, GAMMA_BAND, PAC_METHOD,
-    THETA_STEPS, GAMMA_STEPS, SURROGATE_STYLE
+    THETA_STEPS, GAMMA_STEPS, SURROGATE_STYLE,
+    MEM_SPLIT, MEM_CROP_SIZE
 )
 
 
@@ -62,81 +63,101 @@ def main():
         )
         
         print(len(merged_df), meg_data.shape)
-        
+
         # Get the appropriate duration column
         dur_col = "duration" if EVENT_TYPE == "fixation" else "associated_fixation_duration"
-        
+
         # Set up parameters for PAC computation
-        sessions = merged_df["session"].values
         time_window = TIME_WINDOW
         theta_band = THETA_BAND
         gamma_band = GAMMA_BAND
         surrogate_style = SURROGATE_STYLE  # Using the parameter from params_pac
-        
+
         print(f"Using surrogate style: {surrogate_style}")
 
-        # Pre-filter all channels in this chunk once (major speedup vs per-channel filtering)
-        # Memory is managed by running multiple smaller chunks via SLURM array jobs
-        print("Pre-filtering all channels for theta and gamma bands...")
-        from mne.filter import filter_data
+        # Split epochs by memorability if requested
+        print(f"\n{'='*60}")
+        print(f"Memorability split configuration: {MEM_SPLIT}")
+        print(f"{'='*60}")
+        epoch_splits = split_epochs_by_memorability(merged_df, meg_data, mem_split=MEM_SPLIT, mem_crop_size=MEM_CROP_SIZE)
 
-        print(f"  Filtering theta band for {meg_data.shape[1]} channels...")
-        theta_data_all = filter_data(
-            meg_data.astype(float), 500,
-            theta_band[0], theta_band[1],
-            method='fir', phase='minimum',
-            n_jobs=-2,
-            verbose=0
-        )
-        print(f"  Theta filtering complete. Shape: {theta_data_all.shape}")
+        # Store all PAC results across splits
+        all_pac_results = []
 
-        print(f"  Filtering gamma band for {meg_data.shape[1]} channels...")
-        gamma_data_all = filter_data(
-            meg_data.astype(float), 500,
-            gamma_band[0], gamma_band[1],
-            method='fir', phase='minimum',
-            n_jobs=-2,
-            verbose=0
-        )
-        print(f"  Gamma filtering complete. Shape: {gamma_data_all.shape}")
+        # Process each split group
+        for split_name, meg_data_split, merged_df_split in epoch_splits:
+            print(f"\n{'='*60}")
+            print(f"Processing {split_name} group: {len(merged_df_split)} epochs")
+            print(f"{'='*60}")
 
-        # Compute PAC values for all channels in parallel
-        channel_indices = range(meg_data.shape[1])
-        pac_per_channel = Parallel(n_jobs=parallel_jobs["pac_computation"])(
-            delayed(compute_pac_hilbert)(
-                None, 500, channel, theta_band=theta_band, gamma_band=gamma_band,
-                times=times, time_window=time_window, n_bootstraps=200,
-                plot=False, verbose=False, durations=merged_df[dur_col].values,
-                method=PAC_METHOD, sessions=sessions, surrogate_style=surrogate_style,
-                theta_data_prefiltered=theta_data_all, gamma_data_prefiltered=gamma_data_all
-            ) for channel in tqdm(channel_indices, desc="Computing PAC per channel", unit="channel")
-        )
-        
-        # Store results in a dataframe
-        pac_results_this_run = pd.DataFrame()
-        if channel_idx is not None:
+            # Get session info for this split
+            sessions_split = merged_df_split["session"].values
+
+            # Pre-filter all channels in this chunk once (major speedup vs per-channel filtering)
+            # Memory is managed by running multiple smaller chunks via SLURM array jobs
+            print("Pre-filtering all channels for theta and gamma bands...")
+            from mne.filter import filter_data
+
+            print(f"  Filtering theta band for {meg_data_split.shape[1]} channels...")
+            theta_data_all = filter_data(
+                meg_data_split.astype(float), 500,
+                theta_band[0], theta_band[1],
+                method='fir', phase='minimum',
+                n_jobs=-2,
+                verbose=0
+            )
+            print(f"  Theta filtering complete. Shape: {theta_data_all.shape}")
+
+            print(f"  Filtering gamma band for {meg_data_split.shape[1]} channels...")
+            gamma_data_all = filter_data(
+                meg_data_split.astype(float), 500,
+                gamma_band[0], gamma_band[1],
+                method='fir', phase='minimum',
+                n_jobs=-2,
+                verbose=0
+            )
+            print(f"  Gamma filtering complete. Shape: {gamma_data_all.shape}")
+
+            # Compute PAC values for all channels in parallel
+            channel_indices = range(meg_data_split.shape[1])
+            pac_per_channel = Parallel(n_jobs=parallel_jobs["pac_computation"])(
+                delayed(compute_pac_hilbert)(
+                    None, 500, channel, theta_band=theta_band, gamma_band=gamma_band,
+                    times=times, time_window=time_window, n_bootstraps=200,
+                    plot=False, verbose=False, durations=merged_df_split[dur_col].values,
+                    method=PAC_METHOD, sessions=sessions_split, surrogate_style=surrogate_style,
+                    theta_data_prefiltered=theta_data_all, gamma_data_prefiltered=gamma_data_all
+                ) for channel in tqdm(channel_indices, desc=f"Computing PAC for {split_name}", unit="channel")
+            )
+
+            # Store results with split_group label
             for ch, pac in enumerate(pac_per_channel):
-                new_rows = pd.DataFrame({
-                    "subject": [SUBJECT_ID],
-                    "channel": [channel_idx[ch]],
-                    "pac": [pac],
-                    "surrogate_style": [surrogate_style]
-                })
-                pac_results_this_run = pd.concat([pac_results_this_run, new_rows], ignore_index=True)
-        else:
-            for ch, pac in enumerate(pac_per_channel):
-                new_rows = pd.DataFrame({
-                    "subject": [SUBJECT_ID],
-                    "channel": [ch],
-                    "pac": [pac],
-                    "surrogate_style": [surrogate_style]
-                })
-                pac_results_this_run = pd.concat([pac_results_this_run, new_rows], ignore_index=True)
+                result_entry = {
+                    "subject": SUBJECT_ID,
+                    "channel": channel_idx[ch] if channel_idx is not None else ch,
+                    "pac": pac,
+                    "split_group": split_name,
+                    "n_epochs": len(merged_df_split),
+                    "surrogate_style": surrogate_style
+                }
+                all_pac_results.append(result_entry)
+
+            print(f"\n{split_name} group complete: {len(pac_per_channel)} channels processed")
+
+        # Convert all results to dataframe
+        pac_results_this_run = pd.DataFrame(all_pac_results)
+
+        print(f"\n{'='*60}")
+        print(f"Total results summary:")
+        print(f"{'='*60}")
+        print(pac_results_this_run.groupby('split_group').agg({
+            'pac': ['count', 'mean', 'std'],
+            'n_epochs': 'first'
+        }))
         
-        print(pac_results_this_run)
-        
-        # Save results with surrogate style in the filename
-        pac_fname = f"{PLOTS_DIR}/pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}.csv"
+        # Save results with surrogate style and mem_split in the filename
+        mem_split_str = f"_memsplit_{MEM_SPLIT.replace('/', '-')}" if MEM_SPLIT else ""
+        pac_fname = f"{PLOTS_DIR}/pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{mem_split_str}.csv"
         if os.path.exists(pac_fname):
             pac_results = pd.read_csv(pac_fname, index_col=0)
             # Concatenate the dataframes
