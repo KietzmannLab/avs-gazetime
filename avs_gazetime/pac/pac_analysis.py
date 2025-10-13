@@ -75,10 +75,12 @@ def main():
         
         print(f"Using surrogate style: {surrogate_style}")
 
-        # Pre-filter all data once before the channel loop (major speedup)
+        # Pre-filter all channels in this chunk once (major speedup vs per-channel filtering)
+        # Memory is managed by running multiple smaller chunks via SLURM array jobs
         print("Pre-filtering all channels for theta and gamma bands...")
         from mne.filter import filter_data
 
+        print(f"  Filtering theta band for {meg_data.shape[1]} channels...")
         theta_data_all = filter_data(
             meg_data.astype(float), 500,
             theta_band[0], theta_band[1],
@@ -86,8 +88,9 @@ def main():
             n_jobs=-2,
             verbose=0
         )
-        print(f"Theta filtering complete. Shape: {theta_data_all.shape}")
+        print(f"  Theta filtering complete. Shape: {theta_data_all.shape}")
 
+        print(f"  Filtering gamma band for {meg_data.shape[1]} channels...")
         gamma_data_all = filter_data(
             meg_data.astype(float), 500,
             gamma_band[0], gamma_band[1],
@@ -95,7 +98,7 @@ def main():
             n_jobs=-2,
             verbose=0
         )
-        print(f"Gamma filtering complete. Shape: {gamma_data_all.shape}")
+        print(f"  Gamma filtering complete. Shape: {gamma_data_all.shape}")
 
         # Compute PAC values for all channels in parallel
         channel_indices = range(meg_data.shape[1])
