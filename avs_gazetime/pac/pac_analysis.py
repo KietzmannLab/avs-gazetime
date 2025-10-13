@@ -88,6 +88,24 @@ def main():
             dur_col=dur_col
         )
 
+        # Check which channels need processing (skip already computed channels)
+        print(f"\n{'='*60}")
+        print("Checking for existing results...")
+        print(f"{'='*60}")
+
+        # Build expected filename
+        mem_split_str = f"_memsplit_{MEM_SPLIT.replace('/', '-')}" if MEM_SPLIT else ""
+        pac_fname = f"{PLOTS_DIR}/pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{mem_split_str}.csv"
+
+        # Load existing results if available
+        existing_results = None
+        if os.path.exists(pac_fname):
+            existing_results = pd.read_csv(pac_fname, index_col=0)
+            print(f"Found existing results: {len(existing_results)} rows")
+            print(f"Existing columns: {existing_results.columns.tolist()}")
+        else:
+            print(f"No existing results found at: {pac_fname}")
+
         # Store all PAC results across splits
         all_pac_results = []
 
@@ -96,6 +114,37 @@ def main():
             print(f"\n{'='*60}")
             print(f"Processing {split_name} group: {len(merged_df_split)} epochs")
             print(f"{'='*60}")
+
+            # Determine which channels need processing for this split
+            channel_indices_all = range(meg_data_split.shape[1])
+            channels_to_process = []
+            channels_to_skip = []
+
+            if existing_results is not None:
+                # Check which channels are already computed for this split group
+                for ch_idx in channel_indices_all:
+                    actual_channel = channel_idx[ch_idx] if channel_idx is not None else ch_idx
+
+                    # Check if this channel + split_group combination exists
+                    existing_entry = existing_results[
+                        (existing_results["channel"] == actual_channel) &
+                        (existing_results["split_group"] == split_name)
+                    ]
+
+                    if len(existing_entry) > 0:
+                        channels_to_skip.append(ch_idx)
+                        print(f"  Skipping channel {actual_channel} ({split_name}) - already computed")
+                    else:
+                        channels_to_process.append(ch_idx)
+            else:
+                # No existing results, process all channels
+                channels_to_process = list(channel_indices_all)
+
+            if not channels_to_process:
+                print(f"  All channels for {split_name} already processed. Skipping this group.")
+                continue
+
+            print(f"  Processing {len(channels_to_process)}/{len(channel_indices_all)} channels for {split_name}")
 
             # Get session info for this split
             sessions_split = merged_df_split["session"].values
@@ -125,8 +174,7 @@ def main():
             )
             print(f"  Gamma filtering complete. Shape: {gamma_data_all.shape}")
 
-            # Compute PAC values for all channels in parallel
-            channel_indices = range(meg_data_split.shape[1])
+            # Compute PAC values only for channels that need processing
             pac_per_channel = Parallel(n_jobs=parallel_jobs["pac_computation"])(
                 delayed(compute_pac_hilbert)(
                     None, 500, channel, theta_band=theta_band, gamma_band=gamma_band,
@@ -134,14 +182,17 @@ def main():
                     plot=False, verbose=False, durations=merged_df_split[dur_col].values,
                     method=PAC_METHOD, sessions=sessions_split, surrogate_style=surrogate_style,
                     theta_data_prefiltered=theta_data_all, gamma_data_prefiltered=gamma_data_all
-                ) for channel in tqdm(channel_indices, desc=f"Computing PAC for {split_name}", unit="channel")
+                ) for channel in tqdm(channels_to_process, desc=f"Computing PAC for {split_name}", unit="channel")
             )
 
             # Store results with split_group label
-            for ch, pac in enumerate(pac_per_channel):
+            for ch_local_idx, pac in enumerate(pac_per_channel):
+                ch_global = channels_to_process[ch_local_idx]
+                actual_channel = channel_idx[ch_global] if channel_idx is not None else ch_global
+
                 result_entry = {
                     "subject": SUBJECT_ID,
-                    "channel": channel_idx[ch] if channel_idx is not None else ch,
+                    "channel": actual_channel,
                     "pac": pac,
                     "split_group": split_name,
                     "n_epochs": len(merged_df_split),
@@ -154,23 +205,38 @@ def main():
         # Convert all results to dataframe
         pac_results_this_run = pd.DataFrame(all_pac_results)
 
-        print(f"\n{'='*60}")
-        print(f"Total results summary:")
-        print(f"{'='*60}")
-        print(pac_results_this_run.groupby('split_group').agg({
-            'pac': ['count', 'mean', 'std'],
-            'n_epochs': 'first'
-        }))
-        
-        # Save results with surrogate style and mem_split in the filename
-        mem_split_str = f"_memsplit_{MEM_SPLIT.replace('/', '-')}" if MEM_SPLIT else ""
-        pac_fname = f"{PLOTS_DIR}/pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{mem_split_str}.csv"
-        if os.path.exists(pac_fname):
-            pac_results = pd.read_csv(pac_fname, index_col=0)
-            # Concatenate the dataframes
-            pac_results = pd.concat([pac_results, pac_results_this_run], ignore_index=True)
-        else:
+        # Merge with existing results
+        if existing_results is not None and len(pac_results_this_run) > 0:
+            print(f"\n{'='*60}")
+            print(f"Merging {len(pac_results_this_run)} new results with {len(existing_results)} existing results")
+            print(f"{'='*60}")
+            pac_results = pd.concat([existing_results, pac_results_this_run], ignore_index=True)
+        elif len(pac_results_this_run) > 0:
             pac_results = pac_results_this_run
+        else:
+            # No new results computed (all channels already done)
+            if existing_results is not None:
+                print(f"\n{'='*60}")
+                print("No new results to add - all channels already computed")
+                print(f"{'='*60}")
+                pac_results = existing_results
+            else:
+                print(f"\n{'='*60}")
+                print("WARNING: No results to save!")
+                print(f"{'='*60}")
+                return
+
+        # Display summary
+        print(f"\n{'='*60}")
+        print(f"Total results summary (after merging):")
+        print(f"{'='*60}")
+        if 'split_group' in pac_results.columns:
+            print(pac_results.groupby('split_group').agg({
+                'pac': ['count', 'mean', 'std'],
+                'n_epochs': 'first'
+            }))
+        else:
+            print(pac_results.describe())
         
         # Save the results
         pac_results.to_csv(pac_fname)
