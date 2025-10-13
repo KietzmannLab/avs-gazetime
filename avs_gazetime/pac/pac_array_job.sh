@@ -22,18 +22,17 @@
 
 #SBATCH --time=12:00:00 # Run time
 #SBATCH --nodes=1
-#SBATCH --mem=100G # Memory per array task
-#SBATCH -c 20 # Cores per array task
+#SBATCH --mem=200G # Memory per array task
+#SBATCH -c 30 # Cores per array task
 #SBATCH -p klab-cpu
 #SBATCH --job-name=wtpac
 #SBATCH --error=error_pac_%A_%a.err
 #SBATCH --output=output_pac_%A_%a.out
-#SBATCH --array=0-29 # This will be overridden by command line
+#SBATCH --array=0-30 # This will be overridden by command line
 #SBATCH --requeue
 
 echo "Running in shell: $SHELL"
 export NCCL_SOCKET_IFNAME=lo
-cd /home/student/p/psulewski/avs-encoding
 
 # Load required modules
 spack load cuda@11.8.0
@@ -44,7 +43,7 @@ conda activate avs
 
 # Parameters
 CH_TYPE="stc"
-gazetime_path="/home/student/p/psulewski/AVS-GazeTime/avs_gazetime"
+gazetime_path="/home/student/p/psulewski/avs-gazetime/avs_gazetime"
 analysis_path="${gazetime_path}/pac/pac_analysis.py"
 
 # Get subject from command line or default to 1
@@ -53,7 +52,8 @@ export SUBJECT_ID_GAZETIME=$SUBJECT
 export CH_TYPE_GAZETIME=$CH_TYPE
 
 # Get total number of chunks from environment or default to array size + 1
-TOTAL_CHUNKS=${CHUNKS:-$(( ${SLURM_ARRAY_TASK_COUNT:-30} + 1 ))}
+TOTAL_CHUNKS=${CHUNKS:-$(( ${SLURM_ARRAY_TASK_COUNT:-60} + 1 ))}
+
 
 echo "Running subject $SUBJECT_ID_GAZETIME with $CH_TYPE_GAZETIME channels"
 echo "Processing chunk ${SLURM_ARRAY_TASK_ID} of ${TOTAL_CHUNKS}"

@@ -83,7 +83,7 @@ def main():
             meg_data.astype(float), 500,
             theta_band[0], theta_band[1],
             method='fir', phase='minimum',
-            n_jobs=parallel_jobs["filter"],
+            n_jobs=-2,
             verbose=0
         )
         print(f"Theta filtering complete. Shape: {theta_data_all.shape}")
@@ -92,7 +92,7 @@ def main():
             meg_data.astype(float), 500,
             gamma_band[0], gamma_band[1],
             method='fir', phase='minimum',
-            n_jobs=parallel_jobs["filter"],
+            n_jobs=-2,
             verbose=0
         )
         print(f"Gamma filtering complete. Shape: {gamma_data_all.shape}")
@@ -133,7 +133,7 @@ def main():
         print(pac_results_this_run)
         
         # Save results with surrogate style in the filename
-        pac_fname = f"{PLOTS_DIR}/pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{surrogate_style}.csv"
+        pac_fname = f"{PLOTS_DIR}/pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}.csv"
         if os.path.exists(pac_fname):
             pac_results = pd.read_csv(pac_fname, index_col=0)
             # Concatenate the dataframes
@@ -152,7 +152,7 @@ def main():
         print(np.sum(pac_results["pac"] > 1.96) / len(pac_results))
         
         # Process cross-frequency analysis for significant channels
-        significant_threshold = 2.56  # z > 2.56 corresponds to p < 0.01
+        significant_threshold = 1.56  # z > 2.56 corresponds to p < 0.01
         significant_channels = pac_results[pac_results["pac"] > significant_threshold]["channel"].values
         # Remove duplicates
         significant_channels = np.unique(significant_channels)
