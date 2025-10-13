@@ -15,8 +15,8 @@ N_BOOTSTRAPS = 200
 FF_BAND_AMPLITUDE = (40, 160)
 FF_BAND_PHASE = (1, 15)
 THETA_STEPS = 1
+GAMMA_STEPS = 15
 
 # Memorability-based epoch splitting
 MEM_SPLIT = None  # Options: None, "50/50", "25/25", "33/33", etc. Format: "bottom_percent/top_percent"
 MEM_CROP_SIZE = 100  # Crop size in pixels for memorability analysis (must match precomputed scores)
-GAMMA_STEPS = 15

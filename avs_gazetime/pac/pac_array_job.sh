@@ -29,9 +29,9 @@
 
 #SBATCH --time=12:00:00 # Run time
 #SBATCH --nodes=1
-#SBATCH --mem=200G # Memory per array task
+#SBATCH --mem=100G # Memory per array task
 #SBATCH -c 30 # Cores per array task
-#SBATCH -p klab-cpu
+#SBATCH -p workq
 #SBATCH --job-name=wtpac
 #SBATCH --error=error_pac_%A_%a.err
 #SBATCH --output=output_pac_%A_%a.out
