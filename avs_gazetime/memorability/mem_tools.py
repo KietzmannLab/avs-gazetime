@@ -49,9 +49,16 @@ def get_memorability_scores(metadata_cross_session, subject, targets, model_task
     print(f"Original metadata length: {len(metadata_cross_session)}")
     print(f"Memorability data length: {len(metadata_with_resmem)}")
     print(f"Metadata columns: {metadata_cross_session.columns.tolist()}")
-    
-    # Check for duplicates in metadata_cross_session
-    merge_columns = ["start_time", "end_time", "duration", "sceneID", "trial", "subject", "session", "type", "recording", "block"]
+    if "associated_fix_start_time" in metadata_cross_session.columns: # this means we have done residual magic (e.g. for the pac analysis)
+         # Check for duplicates in metadata_cross_session
+        merge_columns = ["associated_fix_start_time", "associated_fixation_duration", "sceneID", "trial", "subject", "session", "type", "recording", "block"]
+        # take the metadata and create a copy of start_time and duration but rename them "associated"
+        metadata_with_resmem["associated_fix_start_time"] = metadata_with_resmem["start_time"]
+        metadata_with_resmem["associated_fixation_duration"] = metadata_with_resmem["duration"]
+        
+    else:
+        # Check for duplicates in metadata_cross_session
+        merge_columns = ["start_time", "duration", "sceneID", "trial", "subject", "session", "type", "recording", "block"]
     
     # Only use merge columns that exist in both dataframes
     available_merge_cols = [col for col in merge_columns if col in metadata_cross_session.columns and col in metadata_with_resmem.columns]
