@@ -12,7 +12,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 # Import custom modules
-from pac_dataloader import load_meg_data, get_channel_chunks, split_epochs_by_memorability
+from pac_dataloader import load_meg_data, get_channel_chunks, split_epochs_by_memorability, aggregate_pac_results
 from pac_functions import compute_pac_hilbert, compute_full_cross_frequency_pac_matrix
 
 # Import configuration
@@ -93,18 +93,41 @@ def main():
         print("Checking for existing results...")
         print(f"{'='*60}")
 
-        # Build expected filename
+        # Build expected filenames
         mem_split_str = f"_memsplit_{MEM_SPLIT.replace('/', '-')}" if MEM_SPLIT else ""
-        pac_fname = f"{PLOTS_DIR}/pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{mem_split_str}.csv"
+        base_fname = f"pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{mem_split_str}"
 
-        # Load existing results if available
+        # Final aggregated CSV filename
+        pac_fname = f"{PLOTS_DIR}/{base_fname}.csv"
+
+        # Job-specific subdirectory for partial results
+        chunks_dir = f"{PLOTS_DIR}/{base_fname}_chunks"
+        os.makedirs(chunks_dir, exist_ok=True)
+
+        print(f"Chunks directory: {chunks_dir}")
+        print(f"Final aggregated results: {pac_fname}")
+
+        # Load existing results from ALL chunk files to check what's already computed
         existing_results = None
-        if os.path.exists(pac_fname):
-            existing_results = pd.read_csv(pac_fname, index_col=0)
-            print(f"Found existing results: {len(existing_results)} rows")
-            print(f"Existing columns: {existing_results.columns.tolist()}")
+        chunk_files = [f for f in os.listdir(chunks_dir) if f.startswith('chunk_') and f.endswith('.csv')] if os.path.exists(chunks_dir) else []
+
+        if chunk_files:
+            print(f"Found {len(chunk_files)} existing chunk files")
+            chunk_dfs = []
+            for chunk_file in chunk_files:
+                chunk_path = os.path.join(chunks_dir, chunk_file)
+                try:
+                    chunk_df = pd.read_csv(chunk_path, index_col=0)
+                    chunk_dfs.append(chunk_df)
+                except Exception as e:
+                    print(f"Warning: Could not read {chunk_file}: {e}")
+
+            if chunk_dfs:
+                existing_results = pd.concat(chunk_dfs, ignore_index=True)
+                print(f"Loaded {len(existing_results)} rows from existing chunks")
+                print(f"Existing columns: {existing_results.columns.tolist()}")
         else:
-            print(f"No existing results found at: {pac_fname}")
+            print(f"No existing chunk files found")
 
         # Store all PAC results across splits
         all_pac_results = []
@@ -205,55 +228,44 @@ def main():
         # Convert all results to dataframe
         pac_results_this_run = pd.DataFrame(all_pac_results)
 
-        # Merge with existing results
-        if existing_results is not None and len(pac_results_this_run) > 0:
-            print(f"\n{'='*60}")
-            print(f"Merging {len(pac_results_this_run)} new results with {len(existing_results)} existing results")
-            print(f"{'='*60}")
-            pac_results = pd.concat([existing_results, pac_results_this_run], ignore_index=True)
-        elif len(pac_results_this_run) > 0:
-            pac_results = pac_results_this_run
-        else:
-            # No new results computed (all channels already done)
-            if existing_results is not None:
-                print(f"\n{'='*60}")
-                print("No new results to add - all channels already computed")
-                print(f"{'='*60}")
-                pac_results = existing_results
-            else:
-                print(f"\n{'='*60}")
-                print("WARNING: No results to save!")
-                print(f"{'='*60}")
-                return
+        # Save job-specific results only if we computed something new
+        if len(pac_results_this_run) > 0:
+            # Determine channel range for filename
+            channels_processed = pac_results_this_run['channel'].unique()
+            min_channel = int(channels_processed.min())
+            max_channel = int(channels_processed.max())
 
-        # Display summary
-        print(f"\n{'='*60}")
-        print(f"Total results summary (after merging):")
-        print(f"{'='*60}")
-        if 'split_group' in pac_results.columns:
-            print(pac_results.groupby('split_group').agg({
-                'pac': ['count', 'mean', 'std'],
-                'n_epochs': 'first'
-            }))
+            # Job-specific filename based on channel range
+            job_fname = f"{chunks_dir}/chunk_ch{min_channel}-{max_channel}.csv"
+
+            print(f"\n{'='*60}")
+            print(f"Saving {len(pac_results_this_run)} results to job-specific file")
+            print(f"Channel range: {min_channel}-{max_channel}")
+            print(f"File: {job_fname}")
+            print(f"{'='*60}")
+
+            pac_results_this_run.to_csv(job_fname)
+            print(f"Successfully saved chunk file")
+
+            # Display summary statistics for this chunk
+            if len(pac_results_this_run) > 0:
+                print(f"\n{'='*60}")
+                print(f"Summary for this chunk:")
+                print(f"{'='*60}")
+                print(pac_results_this_run.describe())
+                # How many channels have a significant PAC (z > 1.96)
+                n_sig = np.sum(pac_results_this_run["pac"] > 1.96)
+                print(f"Significant channels (z > 1.96): {n_sig}/{len(pac_results_this_run)}")
         else:
-            print(pac_results.describe())
-        
-        # Save the results
-        pac_results.to_csv(pac_fname)
-        
-        # Display summary statistics
-        print(pac_results.describe())
-        # How many channels have a significant PAC (z > 1.96)
-        print(np.sum(pac_results["pac"] > 1.96))
-        # What is the fraction of channels with significant PAC
-        print(np.sum(pac_results["pac"] > 1.96) / len(pac_results))
-        
-        # Process cross-frequency analysis for significant channels
-        significant_threshold = 1.56  # z > 2.56 corresponds to p < 0.01
-        significant_channels = pac_results[pac_results["pac"] > significant_threshold]["channel"].values
-        # Remove duplicates
-        significant_channels = np.unique(significant_channels)
-        print(f"Found {len(significant_channels)} significant channels: {significant_channels}")
+            print(f"\n{'='*60}")
+            print("No new results computed - all channels already processed")
+            print(f"{'='*60}")
+
+        # Run aggregation to update the final CSV
+        print(f"\n{'='*60}")
+        print("Running aggregation to update final results CSV...")
+        print(f"{'='*60}")
+        aggregate_pac_results(chunks_dir, pac_fname)
         
        
 if __name__ == "__main__":

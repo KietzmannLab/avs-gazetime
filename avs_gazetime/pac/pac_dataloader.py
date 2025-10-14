@@ -390,43 +390,120 @@ def optimize_n_jobs(debug=True):
 
     # Get number of available CPU cores
     cpu_count = os.cpu_count()
-    
+
     try:
         # Try to get affinity if supported
         available_cores = len(psutil.Process().cpu_affinity()) if hasattr(psutil.Process(), 'cpu_affinity') else cpu_count
     except (AttributeError, ImportError):
         # Fall back to CPU count if psutil isn't available or doesn't support affinity
         available_cores = cpu_count
-    
+
     # Scale reserved percentage based on core count (less overhead with more cores)
     # From 10% at 8 cores down to 2% at 128+ cores
     reserved_percentage = max(0.02, min(0.1, 0.1 * (32 / max(32, available_cores))))
     reserved_cores = max(1, int(available_cores * reserved_percentage))
     usable_cores = max(1, available_cores - reserved_cores)
-    
+
     jobs_dict = {
     # Filter jobs: 10-20% of cores, minimum 2, maximum 24
     "filter": max(2, min(24, int(usable_cores * 0.15))),  # 15% of cores = 6
-    
+
     # PAC computation: 40-60% of cores, scales with core count
     "pac_computation": max(4, min(int(usable_cores * 0.5), usable_cores - 10)),  # 50% = 20 cores
-    
+
     # Bootstrap: 20-30% of cores, scales with system size
     "bootstrap": max(4, min(int(usable_cores * 0.25), 20)),  # 25% = 10 cores
-    
+
     # Cross-frequency: 70-90% of cores, with minimum overhead reserved
     "cross_freq": max(8, min(usable_cores - 4, int(usable_cores * 0.8))),  # 80% = 32 cores
-    
+
     # Batch size: scales with core count to optimize throughput
     "batch_size": max(5, min(30, int(usable_cores / 8) + 4))  # More optimal scaling = 9
     }
     # Print detected environment and settings
     print(f"Detected {available_cores} cores, using {usable_cores} for computation")
     print(f"Job allocation: {jobs_dict}")
-    
+
     if debug:
         # Debug mode: set all jobs to 1 core
         jobs_dict = {key: 1 for key in jobs_dict.keys()}
         print("Running in debug mode, setting all jobs to 1 core")
-    
+
     return jobs_dict
+
+def aggregate_pac_results(chunks_dir, output_fname):
+    """
+    Aggregate all chunk CSV files into a single consolidated CSV.
+
+    This function reads all chunk files from the chunks directory,
+    removes duplicates (keeping the first occurrence), and saves
+    the aggregated results to the output file.
+
+    Parameters:
+    -----------
+    chunks_dir : str
+        Directory containing chunk_*.csv files
+    output_fname : str
+        Path to save the aggregated CSV file
+    """
+    import glob
+    import os
+
+    # Find all chunk files
+    chunk_files = sorted(glob.glob(os.path.join(chunks_dir, "chunk_*.csv")))
+
+    if not chunk_files:
+        print(f"No chunk files found in {chunks_dir}")
+        return
+
+    print(f"Found {len(chunk_files)} chunk files to aggregate")
+
+    # Read all chunk files
+    all_chunks = []
+    for chunk_file in chunk_files:
+        try:
+            chunk_df = pd.read_csv(chunk_file, index_col=0)
+            all_chunks.append(chunk_df)
+            print(f"  Loaded {os.path.basename(chunk_file)}: {len(chunk_df)} rows")
+        except Exception as e:
+            print(f"  Warning: Could not read {os.path.basename(chunk_file)}: {e}")
+
+    if not all_chunks:
+        print("No valid chunk files could be read")
+        return
+
+    # Concatenate all chunks
+    aggregated_df = pd.concat(all_chunks, ignore_index=True)
+    print(f"\nTotal rows before deduplication: {len(aggregated_df)}")
+
+    # Remove duplicates based on channel and split_group (keep first occurrence)
+    if 'split_group' in aggregated_df.columns:
+        aggregated_df = aggregated_df.drop_duplicates(subset=['channel', 'split_group'], keep='first')
+    else:
+        aggregated_df = aggregated_df.drop_duplicates(subset=['channel'], keep='first')
+
+    print(f"Total rows after deduplication: {len(aggregated_df)}")
+
+    # Sort by channel for better readability
+    aggregated_df = aggregated_df.sort_values('channel').reset_index(drop=True)
+
+    # Save aggregated results
+    aggregated_df.to_csv(output_fname)
+    print(f"\nAggregated results saved to: {output_fname}")
+
+    # Display summary statistics
+    print(f"\n{'='*60}")
+    print("Aggregated results summary:")
+    print(f"{'='*60}")
+    if 'split_group' in aggregated_df.columns:
+        summary = aggregated_df.groupby('split_group').agg({
+            'pac': ['count', 'mean', 'std'],
+            'n_epochs': 'first'
+        })
+        print(summary)
+    else:
+        print(aggregated_df.describe())
+
+    # Count significant channels
+    n_sig = np.sum(aggregated_df["pac"] > 1.96)
+    print(f"\nSignificant channels (z > 1.96): {n_sig}/{len(aggregated_df)} ({100*n_sig/len(aggregated_df):.1f}%)")
