@@ -20,3 +20,8 @@ GAMMA_STEPS = 15
 # Memorability-based epoch splitting
 MEM_SPLIT = "40/40"  # Options: None, "50/50", "25/25", "33/33", etc. Format: "bottom_percent/top_percent"
 MEM_CROP_SIZE = 100  # Crop size in pixels for memorability analysis (must match precomputed scores)
+
+# Duration-based epoch splitting
+DURATION_SPLIT = None  # Threshold in ms (e.g., 350, 400) or None to disable
+DURATION_BALANCE = True  # Balance sample sizes between short/long groups
+OFFSET_LOCKED = False  # If True, time-lock to fixation offset (end) instead of onset

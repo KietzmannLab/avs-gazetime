@@ -12,7 +12,7 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 # Import custom modules
-from pac_dataloader import load_meg_data, get_channel_chunks, split_epochs_by_memorability, aggregate_pac_results
+from pac_dataloader import load_meg_data, get_channel_chunks, split_epochs_by_memorability, split_epochs_by_duration, aggregate_pac_results
 from pac_functions import compute_pac_hilbert, compute_full_cross_frequency_pac_matrix
 
 # Import configuration
@@ -29,7 +29,8 @@ from params_pac import (
     PHASE_OR_POWER, remove_erfs,
     TIME_WINDOW, THETA_BAND, GAMMA_BAND, PAC_METHOD,
     THETA_STEPS, GAMMA_STEPS, SURROGATE_STYLE,
-    MEM_SPLIT, MEM_CROP_SIZE
+    MEM_SPLIT, MEM_CROP_SIZE,
+    DURATION_SPLIT, DURATION_BALANCE, OFFSET_LOCKED
 )
 
 
@@ -75,18 +76,42 @@ def main():
 
         print(f"Using surrogate style: {surrogate_style}")
 
-        # Split epochs by memorability if requested
+        # Split epochs by memorability or duration if requested
         print(f"\n{'='*60}")
         print(f"Memorability split configuration: {MEM_SPLIT}")
+        print(f"Duration split configuration: {DURATION_SPLIT}")
+        print(f"Offset-locked: {OFFSET_LOCKED}")
         print(f"{'='*60}")
-        epoch_splits = split_epochs_by_memorability(
-            merged_df, meg_data,
-            mem_split=MEM_SPLIT,
-            mem_crop_size=MEM_CROP_SIZE,
-            balance_epochs=True,
-            match_duration_distribution=True,
-            dur_col=dur_col
-        )
+
+        # Validate: only one split type allowed at a time
+        if DURATION_SPLIT is not None and MEM_SPLIT is not None:
+            raise ValueError(
+                "ERROR: Cannot use both DURATION_SPLIT and MEM_SPLIT simultaneously.\n"
+                f"  DURATION_SPLIT = {DURATION_SPLIT}\n"
+                f"  MEM_SPLIT = {MEM_SPLIT}\n"
+                "Please set one to None in params_pac.py"
+            )
+
+        # Apply the appropriate split
+        if DURATION_SPLIT is not None:
+            epoch_splits = split_epochs_by_duration(
+                merged_df, meg_data,
+                duration_split=DURATION_SPLIT,
+                balance_epochs=DURATION_BALANCE,
+                dur_col=dur_col
+            )
+        elif MEM_SPLIT is not None:
+            epoch_splits = split_epochs_by_memorability(
+                merged_df, meg_data,
+                mem_split=MEM_SPLIT,
+                mem_crop_size=MEM_CROP_SIZE,
+                balance_epochs=True,
+                match_duration_distribution=True,
+                dur_col=dur_col
+            )
+        else:
+            # No split - use all data
+            epoch_splits = [("all", meg_data, merged_df)]
 
         # Check which channels need processing (skip already computed channels)
         print(f"\n{'='*60}")
@@ -94,8 +119,14 @@ def main():
         print(f"{'='*60}")
 
         # Build expected filenames
-        mem_split_str = f"_memsplit_{MEM_SPLIT.replace('/', '-')}" if MEM_SPLIT else ""
-        base_fname = f"pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{mem_split_str}"
+        split_str = ""
+        if DURATION_SPLIT is not None:
+            split_str = f"_dursplit_{DURATION_SPLIT}ms"
+        elif MEM_SPLIT is not None:
+            split_str = f"_memsplit_{MEM_SPLIT.replace('/', '-')}"
+
+        offset_str = "_offset" if OFFSET_LOCKED else ""
+        base_fname = f"pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{split_str}{offset_str}"
 
         # Final aggregated CSV filename
         pac_fname = f"{PLOTS_DIR}/{base_fname}.csv"
@@ -204,7 +235,8 @@ def main():
                     times=times, time_window=time_window, n_bootstraps=200,
                     plot=False, verbose=False, durations=merged_df_split[dur_col].values,
                     method=PAC_METHOD, sessions=sessions_split, surrogate_style=surrogate_style,
-                    theta_data_prefiltered=theta_data_all, gamma_data_prefiltered=gamma_data_all
+                    theta_data_prefiltered=theta_data_all, gamma_data_prefiltered=gamma_data_all,
+                    offset_locked=OFFSET_LOCKED
                 ) for channel in tqdm(channels_to_process, desc=f"Computing PAC for {split_name}", unit="channel")
             )
 

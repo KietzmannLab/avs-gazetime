@@ -281,7 +281,7 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
                        plot=False, verbose=True, durations=None,
                        method='modulation_index', sessions=None, random_seed=42,
                        surrogate_style='phase_shuffle', theta_data_prefiltered=None,
-                       gamma_data_prefiltered=None):
+                       gamma_data_prefiltered=None, offset_locked=False):
     """
     Compute phase-amplitude coupling using the Hilbert transform for a specific channel.
 
@@ -323,6 +323,10 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
     - gamma_data_prefiltered: np.ndarray or None
         Pre-filtered gamma data of shape (n_epochs, n_channels, n_times). If provided,
         skips filtering step for gamma band.
+    - offset_locked: bool
+        If True, extract PAC window relative to fixation offset (end) instead of onset.
+        Requires durations to be provided. The PAC window will be the last N samples
+        before fixation end, where N = (time_window[1] - time_window[0]) * sfreq.
 
     Returns:
     - z_scores: float
@@ -380,39 +384,81 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
         print(f"Theta data shape: {theta_data.shape}, Gamma data shape: {gamma_data.shape}")
 
     # Identify valid epochs (epochs that are long enough)
-    valid_epochs = durations > time_window[1]
-    if np.sum(valid_epochs) == 0:
-        raise ValueError("No valid epochs found. All epochs are shorter than the time window.")
-    
+    # For offset-locked PAC, we need duration >= PAC window duration
+    # For onset-locked PAC, we need duration > time_window[1]
+    window_duration = time_window[1] - time_window[0]
+
+    if offset_locked:
+        valid_epochs = durations >= window_duration
+        if np.sum(valid_epochs) == 0:
+            raise ValueError(f"No valid epochs found. All epochs are shorter than the PAC window duration ({window_duration}s).")
+    else:
+        valid_epochs = durations > time_window[1]
+        if np.sum(valid_epochs) == 0:
+            raise ValueError("No valid epochs found. All epochs are shorter than the time window.")
+
     # Apply valid epoch mask
     theta_data = theta_data[valid_epochs, :]
     gamma_data = gamma_data[valid_epochs, :]
-    
-    # Create time mask for the specified time window
-    times_mask = (times >= time_window[0]) & (times <= time_window[1])
-    
+    valid_durations = durations[valid_epochs]
+
     # Print information about valid epochs
     if verbose:
         print(f"Valid epochs: {np.sum(valid_epochs)}")
-    
+        print(f"Offset-locked: {offset_locked}")
+
     # Update sessions array if provided
     if sessions is not None:
         sessions = sessions[valid_epochs]
-    
-    # Plot median of theta and gamma data if requested
-    if plot:
-        plot_median_theta_gamma(theta_data, gamma_data, times, times_mask, channel, 
-                               theta_band, gamma_band,
-                               PLOTS_DIR=os.environ.get('PLOTS_DIR', './plots'))
-    
+
     # Compute the Hilbert transform to get phase and amplitude
     theta_phase = np.angle(hilbert(theta_data, axis=1))
     gamma_amplitude = np.abs(hilbert(gamma_data, axis=1))
-    
-   
-    # Apply the time mask
-    theta_phase = theta_phase[:, times_mask]
-    gamma_amplitude = gamma_amplitude[:, times_mask]
+
+    # Apply time window extraction
+    if offset_locked:
+        # For offset-locked: Extract last N samples before fixation end
+        # N = window_duration * sfreq
+        n_samples = int(window_duration * sfreq)
+
+        # Extract the last n_samples for each epoch
+        theta_phase_windowed = np.zeros((theta_phase.shape[0], n_samples))
+        gamma_amplitude_windowed = np.zeros((gamma_amplitude.shape[0], n_samples))
+
+        for i in range(theta_phase.shape[0]):
+            # Calculate end time in samples
+            duration_samples = int(valid_durations[i] * sfreq)
+            start_idx = max(0, duration_samples - n_samples)
+            end_idx = duration_samples
+
+            # Extract the window
+            theta_phase_windowed[i, :] = theta_phase[i, start_idx:end_idx]
+            gamma_amplitude_windowed[i, :] = gamma_amplitude[i, start_idx:end_idx]
+
+        theta_phase = theta_phase_windowed
+        gamma_amplitude = gamma_amplitude_windowed
+
+        # Create a pseudo time mask for plotting (not used in offset mode)
+        times_mask = np.ones(n_samples, dtype=bool)
+
+        if verbose:
+            print(f"Extracted last {n_samples} samples (window duration: {window_duration}s) before fixation end")
+    else:
+        # For onset-locked: Use standard time masking
+        times_mask = (times >= time_window[0]) & (times <= time_window[1])
+        theta_phase = theta_phase[:, times_mask]
+        gamma_amplitude = gamma_amplitude[:, times_mask]
+
+    # Plot median of theta and gamma data if requested
+    if plot:
+        # For offset-locked, create adjusted times array for plotting
+        if offset_locked:
+            plot_times = np.linspace(-window_duration, 0, len(times_mask))
+        else:
+            plot_times = times
+        plot_median_theta_gamma(theta_data, gamma_data, plot_times, times_mask, channel,
+                               theta_band, gamma_band,
+                               PLOTS_DIR=os.environ.get('PLOTS_DIR', './plots'))
     
     if verbose:
         print("Theta phase shape:", theta_phase.shape, "min:", np.min(theta_phase), "max:", np.max(theta_phase))

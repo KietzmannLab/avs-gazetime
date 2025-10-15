@@ -347,6 +347,97 @@ def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_s
 
     return results
 
+def split_epochs_by_duration(merged_df, meg_data, duration_split=None,
+                              balance_epochs=True, dur_col="duration"):
+    """
+    Split epochs into short/long duration groups.
+
+    Parameters:
+    -----------
+    merged_df : pd.DataFrame
+        Metadata for the epochs (should already be duration-filtered).
+    meg_data : np.ndarray
+        MEG data array of shape (n_epochs, n_channels, n_times).
+    duration_split : float or None
+        Duration threshold in milliseconds (e.g., 350).
+        If None, returns all data as a single group.
+    balance_epochs : bool
+        If True, downsample to ensure equal number of epochs in each group.
+    dur_col : str
+        Name of duration column to use for splitting.
+
+    Returns:
+    --------
+    list of tuples: [(split_name, meg_data_subset, merged_df_subset), ...]
+        If duration_split is None: [("all", full_data, full_df)]
+        If duration_split=350: [("short_dur", <350ms, ...), ("long_dur", ≥350ms, ...)]
+    """
+    if duration_split is None:
+        print("No duration split requested - using all epochs")
+        return [("all", meg_data, merged_df)]
+
+    print(f"Splitting epochs by duration: {duration_split} ms threshold")
+
+    # Convert threshold to seconds
+    threshold_s = duration_split / 1000.0
+
+    # Get durations
+    durations = merged_df[dur_col].values
+
+    print(f"Duration range: [{np.min(durations)*1000:.1f}, {np.max(durations)*1000:.1f}] ms")
+    print(f"Duration threshold: {threshold_s*1000:.1f} ms")
+
+    # Create masks
+    short_mask = durations < threshold_s
+    long_mask = durations >= threshold_s
+
+    # Split the data
+    results = []
+
+    # Get initial groups
+    short_df = merged_df[short_mask].copy()
+    long_df = merged_df[long_mask].copy()
+
+    print(f"  Initial short duration group: {len(short_df)} epochs (< {threshold_s*1000:.1f} ms)")
+    print(f"  Initial long duration group: {len(long_df)} epochs (≥ {threshold_s*1000:.1f} ms)")
+
+    # Balance epochs between groups if requested
+    if balance_epochs and len(short_df) > 0 and len(long_df) > 0:
+        print(f"\n  Balancing epoch counts between groups...")
+
+        # Determine target count (minimum of the two groups)
+        n_target = min(len(short_df), len(long_df))
+        print(f"    Target count per group: {n_target} epochs")
+
+        # Simple random sampling
+        print(f"    Using simple random sampling...")
+        short_df_balanced = short_df.sample(n=n_target, random_state=42)
+        long_df_balanced = long_df.sample(n=n_target, random_state=43)
+
+        # Update to use balanced versions
+        short_df = short_df_balanced.reset_index(drop=True)
+        long_df = long_df_balanced.reset_index(drop=True)
+
+        print(f"  Final balanced counts: Short={len(short_df)}, Long={len(long_df)}")
+
+        # Report duration statistics
+        print(f"  Duration statistics after balancing:")
+        print(f"    Short group: mean={short_df[dur_col].mean()*1000:.1f}ms, std={short_df[dur_col].std()*1000:.1f}ms")
+        print(f"    Long group:  mean={long_df[dur_col].mean()*1000:.1f}ms, std={long_df[dur_col].std()*1000:.1f}ms")
+
+    # Get MEG data for selected epochs
+    short_meg = meg_data[short_df.index.values]
+    long_meg = meg_data[long_df.index.values]
+
+    # Reset indices
+    short_df = short_df.reset_index(drop=True)
+    long_df = long_df.reset_index(drop=True)
+
+    results.append(("short_dur", short_meg, short_df))
+    results.append(("long_dur", long_meg, long_df))
+
+    return results
+
 def get_channel_chunks(ch_type, event_type, channel_chunk=None):
     """
     Get channel chunks for processing.

@@ -184,3 +184,9 @@ cython_debug/
 *.mov
 *.avi
 *.mkv
+
+#tables
+*.csv
+*.tsv
+*.xlsx
+*.xls
