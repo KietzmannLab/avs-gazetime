@@ -426,10 +426,15 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
         gamma_amplitude_windowed = np.zeros((gamma_amplitude.shape[0], n_samples))
 
         for i in range(theta_phase.shape[0]):
-            # Calculate end time in samples
-            duration_samples = int(valid_durations[i] * sfreq)
-            start_idx = max(0, duration_samples - n_samples)
-            end_idx = duration_samples
+            # Find the sample index corresponding to fixation end time
+            # Duration is relative to fixation onset (t=0 in times vector)
+            fixation_end_time = valid_durations[i]
+
+            # Find the index in times vector closest to fixation end
+            end_idx = np.argmin(np.abs(times - fixation_end_time))
+
+            # Calculate start index (N samples before end)
+            start_idx = max(0, end_idx - n_samples)
 
             # Extract the window
             theta_phase_windowed[i, :] = theta_phase[i, start_idx:end_idx]

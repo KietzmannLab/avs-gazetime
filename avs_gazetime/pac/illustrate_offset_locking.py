@@ -142,31 +142,27 @@ window_samples = int(window_duration * sfreq)
 cmap_epochs = plt.cm.viridis
 
 for i, duration in enumerate(sorted_durations):
-    # Full epoch extent (always fixed length)
-    epoch_samples = len(times)
-
-    # Fixation duration in samples
-    duration_samples = int(duration * sfreq)
-
-    # PAC window: last N samples before fixation end
-    window_start_samples = max(0, duration_samples - window_samples)
-    window_end_samples = duration_samples
-
-    # Convert to time (seconds)
-    time_array = np.arange(epoch_samples) / sfreq + times[0]
-
-    # Plot full epoch extent (light gray background)
+    # Full epoch extent (light gray background)
     ax1.fill_between([times[0], times[-1]], i-0.4, i+0.4,
                      color='lightgray', alpha=0.2, linewidth=0)
 
     # Plot fixation duration (blue gradient based on duration)
+    # Fixation starts at t=0 and ends at t=duration
     color_val = duration / sorted_durations.max()
-    ax1.fill_between([times[0], duration], i-0.4, i+0.4,
+    ax1.fill_between([0, duration], i-0.4, i+0.4,
                      color=cmap_epochs(color_val), alpha=0.4, linewidth=0)
 
+    # PAC window: last N samples before fixation end
+    # Find the time index corresponding to fixation end
+    fixation_end_time = duration
+    end_idx = np.argmin(np.abs(times - fixation_end_time))
+    start_idx = max(0, end_idx - window_samples)
+
+    # Get actual time values for the window
+    window_start_time = times[start_idx]
+    window_end_time = times[end_idx]
+
     # Plot PAC window (red highlight)
-    window_start_time = time_array[window_start_samples]
-    window_end_time = time_array[min(window_end_samples, len(time_array)-1)]
     ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
                      color='red', alpha=0.7, linewidth=0)
 
