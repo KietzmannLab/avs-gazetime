@@ -73,47 +73,40 @@ all_durations = merged_df[dur_col].values
 max_epoch_length = times[-1] - times[0]
 print(f"  Epoch length: {max_epoch_length:.3f}s")
 
-# Apply duration split
+# For visualization, show ALL epochs (including those too short for PAC)
+# But mark which ones would be included in the analysis
+all_durations = merged_df[dur_col].values
+
+# Split into groups: too_short, short, long
+too_short_mask = all_durations < window_duration
+short_mask = (all_durations >= window_duration) & (all_durations < duration_threshold)
+long_mask = all_durations >= duration_threshold
+
 print(f"\n{'='*70}")
-print("Applying duration split...")
+print("Epoch distribution:")
 print(f"{'='*70}")
+print(f"  Too short (< {window_duration*1000:.0f}ms): {np.sum(too_short_mask)} epochs - EXCLUDED from analysis")
+print(f"  Short ({window_duration*1000:.0f}-{duration_threshold*1000:.0f}ms): {np.sum(short_mask)} epochs")
+print(f"  Long (>= {duration_threshold*1000:.0f}ms): {np.sum(long_mask)} epochs")
 
-# For offset-locked, we need to filter epochs shorter than window duration
-min_duration = window_duration  # All fixations must be at least this long
+# For balanced counts (what would be used in analysis)
+n_analysis = min(np.sum(short_mask), np.sum(long_mask))
+print(f"  Balanced analysis groups: {n_analysis} epochs each")
 
-epoch_splits = split_epochs_by_duration(
-    merged_df, meg_data,
-    duration_split=duration_threshold * 1000,  # Convert to ms
-    balance_epochs=DURATION_BALANCE,
-    dur_col=dur_col,
-    min_duration=min_duration  # Filter out epochs shorter than PAC window
-)
+# Combine all durations and create labels
+all_labels = np.zeros(len(all_durations))
+all_labels[short_mask] = 1  # short = 1
+all_labels[long_mask] = 2   # long = 2
+# too_short remains 0
 
-# Extract split groups
-short_name, short_meg, short_df = epoch_splits[0]
-long_name, long_meg, long_df = epoch_splits[1]
-
-short_durations = short_df[dur_col].values
-long_durations = long_df[dur_col].values
-
-# Combine and sort by duration for visualization
-all_durations_split = np.concatenate([short_durations, long_durations])
-all_labels = np.concatenate([
-    np.zeros(len(short_durations)),  # 0 = short
-    np.ones(len(long_durations))     # 1 = long
-])
-
-sorted_indices = np.argsort(all_durations_split)
-sorted_durations = all_durations_split[sorted_indices]
+# Sort by duration for visualization
+sorted_indices = np.argsort(all_durations)
+sorted_durations = all_durations[sorted_indices]
 sorted_labels = all_labels[sorted_indices]
 
-# Find split point
-split_idx = np.where(sorted_labels == 1)[0][0]
-
-print(f"\nSplit groups:")
-print(f"  Short: {len(short_durations)} epochs, mean={short_durations.mean()*1000:.1f}ms")
-print(f"  Long: {len(long_durations)} epochs, mean={long_durations.mean()*1000:.1f}ms")
-print(f"  Split index: {split_idx}")
+# Find split points
+split_idx_1 = np.where(sorted_labels >= 1)[0][0] if np.any(sorted_labels >= 1) else len(sorted_durations)
+split_idx_2 = np.where(sorted_labels >= 2)[0][0] if np.any(sorted_labels >= 2) else len(sorted_durations)
 
 # Subsample for visualization if too many epochs
 n_epochs_to_show = min(200, len(sorted_durations))
@@ -121,7 +114,8 @@ if len(sorted_durations) > n_epochs_to_show:
     subsample_indices = np.linspace(0, len(sorted_durations)-1, n_epochs_to_show, dtype=int)
     sorted_durations = sorted_durations[subsample_indices]
     sorted_labels = sorted_labels[subsample_indices]
-    split_idx = np.where(sorted_labels == 1)[0][0]
+    split_idx_1 = np.where(sorted_labels >= 1)[0][0] if np.any(sorted_labels >= 1) else len(sorted_durations)
+    split_idx_2 = np.where(sorted_labels >= 2)[0][0] if np.any(sorted_labels >= 2) else len(sorted_durations)
     print(f"\nSubsampled to {n_epochs_to_show} epochs for visualization")
 
 # ============================================================================
@@ -146,71 +140,69 @@ window_samples = int(window_duration * sfreq)
 cmap_epochs = plt.cm.viridis
 
 for i, duration in enumerate(sorted_durations):
+    label = sorted_labels[i]
+
     # Full epoch extent (light gray background)
     ax1.fill_between([times[0], times[-1]], i-0.4, i+0.4,
                      color='lightgray', alpha=0.2, linewidth=0)
 
-    # Plot fixation duration (blue gradient based on duration)
+    # Plot fixation duration with color based on group
     # Fixation starts at t=0 and ends at t=duration
-    color_val = duration / sorted_durations.max()
+    if label == 0:  # Too short - gray
+        fix_color = 'gray'
+    elif label == 1:  # Short - green
+        fix_color = 'darkgreen'
+    else:  # Long - orange
+        fix_color = 'darkorange'
+
     ax1.fill_between([0, duration], i-0.4, i+0.4,
-                     color=cmap_epochs(color_val), alpha=0.4, linewidth=0)
+                     color=fix_color, alpha=0.4, linewidth=0)
 
-    # PAC window: last N samples before fixation end
-    # Find the time index corresponding to fixation end
-    fixation_end_time = duration
-    end_idx = np.argmin(np.abs(times - fixation_end_time))
-    start_idx = max(0, end_idx - window_samples)
+    # Plot PAC window (red highlight) only for epochs >= window_duration
+    if duration >= window_duration:
+        # PAC window: last N samples before fixation end
+        fixation_end_time = duration
+        end_idx = np.argmin(np.abs(times - fixation_end_time))
+        start_idx = max(0, end_idx - window_samples)
 
-    # Get actual time values for the window
-    window_start_time = times[start_idx]
-    window_end_time = times[end_idx]
+        # Get actual time values for the window
+        window_start_time = times[start_idx]
+        window_end_time = times[end_idx]
 
-    # Plot PAC window (red highlight)
-    ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
-                     color='red', alpha=0.7, linewidth=0)
+        # Plot PAC window (red highlight)
+        ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
+                         color='red', alpha=0.7, linewidth=0)
 
     # Mark fixation end with vertical line
     ax1.plot([duration, duration], [i-0.4, i+0.4],
-             color='darkblue', linewidth=1.5, alpha=0.8)
+             color='darkblue', linewidth=1, alpha=0.6)
 
-# Add horizontal line separating short and long
-ax1.axhline(y=split_idx-0.5, color='white', linewidth=3, linestyle='--', zorder=10)
-
-# Add text labels for groups
-mid_short = split_idx / 2
-mid_long = split_idx + (n_epochs - split_idx) / 2
-
-ax1.text(times[0] + 0.05, mid_short, 'SHORT\nFIXATIONS',
-        fontsize=16, fontweight='bold', ha='left', va='center',
-        color='white', bbox=dict(boxstyle='round', facecolor='darkgreen', alpha=0.8))
-ax1.text(times[0] + 0.05, mid_long, 'LONG\nFIXATIONS',
-        fontsize=16, fontweight='bold', ha='left', va='center',
-        color='white', bbox=dict(boxstyle='round', facecolor='darkorange', alpha=0.8))
+# Add horizontal lines separating groups
+ax1.axhline(y=split_idx_1-0.5, color='black', linewidth=2, linestyle='--', alpha=0.5, zorder=10)
+ax1.axhline(y=split_idx_2-0.5, color='black', linewidth=2, linestyle='--', alpha=0.5, zorder=10)
 
 ax1.set_xlabel('Time [s]', fontsize=14, fontweight='bold')
 ax1.set_ylabel('Fixation Epochs [sorted by duration]', fontsize=14, fontweight='bold')
 ax1.set_title('Offset-Locked PAC Window Selection', fontsize=16, fontweight='bold', pad=20)
-ax1.set_xlim(times[0] - 0.05, times[-1] + 0.05)
+ax1.set_xlim(-0.2, 0.8)  # Trim to -200ms to 800ms
 ax1.set_ylim(-1, n_epochs)
 
 # Add fixation onset line
-ax1.axvline(x=0, color='white', linewidth=2, linestyle=':', alpha=0.8, label='Fixation onset')
+ax1.axvline(x=0, color='black', linewidth=2, linestyle=':', alpha=0.5)
 
 # Add legend
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 legend_elements = [
-    Patch(facecolor='lightgray', alpha=0.2, label=f'Epoch extent ({max_epoch_length:.2f}s)'),
-    Patch(facecolor='steelblue', alpha=0.4, label='Fixation duration'),
-    Patch(facecolor='red', alpha=0.7, label=f'PAC window ({window_duration*1000:.0f}ms before end)'),
-    Line2D([0], [0], color='white', linewidth=3, linestyle='--',
-           label=f'Threshold ({duration_threshold*1000:.0f}ms)'),
-    Line2D([0], [0], color='white', linewidth=2, linestyle=':',
-           label='Fixation onset (t=0)')
+    Patch(facecolor='gray', alpha=0.4, label='Too short'),
+    Patch(facecolor='darkgreen', alpha=0.4, label='Short'),
+    Patch(facecolor='darkorange', alpha=0.4, label='Long'),
+    Patch(facecolor='red', alpha=0.7, label=f'PAC window'),
+    Line2D([0], [0], color='black', linewidth=2, linestyle=':', alpha=0.5,
+           label='Fixation onset')
 ]
 ax1.legend(handles=legend_elements, loc='upper right', frameon=True,
-          fontsize=11, fancybox=True, shadow=True)
+          fontsize=10, fancybox=False, shadow=False)
 
 ax1.grid(True, axis='x', alpha=0.3, linestyle='--')
 ax1.set_facecolor('#f0f0f0')
@@ -221,58 +213,57 @@ ax1.set_facecolor('#f0f0f0')
 ax2 = axes[1]
 
 # Create bins for histogram
-bins = np.linspace(0, max(sorted_durations.max(), duration_threshold*1.5), 40)
+bins = np.linspace(0, sorted_durations.max()*1.1, 40)
 
-# Plot histograms
-short_mask = sorted_labels == 0
-long_mask = sorted_labels == 1
+# Plot histograms for all three groups
+too_short_mask = sorted_labels == 0
+short_mask = sorted_labels == 1
+long_mask = sorted_labels == 2
 
-ax2.hist(sorted_durations[short_mask]*1000, bins=bins*1000,
-        alpha=0.6, color='steelblue', label=f'Short (n={np.sum(short_mask)})',
-        edgecolor='black', linewidth=1)
-ax2.hist(sorted_durations[long_mask]*1000, bins=bins*1000,
-        alpha=0.6, color='orange', label=f'Long (n={np.sum(long_mask)})',
-        edgecolor='black', linewidth=1)
+if np.sum(too_short_mask) > 0:
+    ax2.hist(sorted_durations[too_short_mask]*1000, bins=bins*1000,
+            alpha=0.5, color='gray', label=f'Too short (n={np.sum(too_short_mask)})',
+            edgecolor='black', linewidth=0.5)
 
-# Add threshold line
-ax2.axvline(x=duration_threshold*1000, color='black', linewidth=3,
-           linestyle='--', label=f'Threshold ({duration_threshold*1000:.0f}ms)', zorder=10)
+if np.sum(short_mask) > 0:
+    ax2.hist(sorted_durations[short_mask]*1000, bins=bins*1000,
+            alpha=0.6, color='darkgreen', label=f'Short (n={np.sum(short_mask)})',
+            edgecolor='black', linewidth=0.5)
 
-# Add PAC window minimum duration line
-ax2.axvline(x=window_duration*1000, color='red', linewidth=2.5,
-           linestyle=':', alpha=0.8,
-           label=f'Min PAC window ({window_duration*1000:.0f}ms)', zorder=10)
+if np.sum(long_mask) > 0:
+    ax2.hist(sorted_durations[long_mask]*1000, bins=bins*1000,
+            alpha=0.6, color='darkorange', label=f'Long (n={np.sum(long_mask)})',
+            edgecolor='black', linewidth=0.5)
 
-# Add shaded region for PAC window
-ax2.axvspan(0, window_duration*1000, color='red', alpha=0.1, zorder=1)
-ax2.text(window_duration*500, ax2.get_ylim()[1]*0.95,
-        'Shorter than\nPAC window', ha='center', va='top',
-        fontsize=10, color='red', fontweight='bold',
-        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+# Add threshold lines
+ax2.axvline(x=duration_threshold*1000, color='black', linewidth=2,
+           linestyle='--', alpha=0.7, zorder=10)
+
+ax2.axvline(x=window_duration*1000, color='red', linewidth=2,
+           linestyle='--', alpha=0.7, zorder=10)
 
 ax2.set_xlabel('Fixation Duration [ms]', fontsize=14, fontweight='bold')
 ax2.set_ylabel('Count', fontsize=14, fontweight='bold')
 ax2.set_title('Duration Distribution & Splitting', fontsize=16, fontweight='bold', pad=20)
-ax2.legend(loc='upper right', frameon=True, fontsize=11, fancybox=True, shadow=True)
+ax2.legend(loc='upper right', frameon=True, fontsize=10, fancybox=False, shadow=False)
 ax2.grid(True, axis='y', alpha=0.3, linestyle='--')
 ax2.set_facecolor('#f0f0f0')
 
 # Add statistics text box
 stats_text = (
-    f"SHORT FIXATIONS:\n"
+    f"TOO SHORT (excluded):\n"
+    f"  n = {np.sum(too_short_mask)}\n\n"
+    f"SHORT (analysis):\n"
     f"  n = {np.sum(short_mask)}\n"
-    f"  mean = {sorted_durations[short_mask].mean()*1000:.1f} ms\n"
-    f"  std = {sorted_durations[short_mask].std()*1000:.1f} ms\n"
-    f"  range = [{sorted_durations[short_mask].min()*1000:.0f}, {sorted_durations[short_mask].max()*1000:.0f}] ms\n\n"
-    f"LONG FIXATIONS:\n"
+    f"  mean = {sorted_durations[short_mask].mean()*1000:.1f} ms\n\n"
+    f"LONG (analysis):\n"
     f"  n = {np.sum(long_mask)}\n"
-    f"  mean = {sorted_durations[long_mask].mean()*1000:.1f} ms\n"
-    f"  std = {sorted_durations[long_mask].std()*1000:.1f} ms\n"
-    f"  range = [{sorted_durations[long_mask].min()*1000:.0f}, {sorted_durations[long_mask].max()*1000:.0f}] ms"
+    f"  mean = {sorted_durations[long_mask].mean()*1000:.1f} ms\n\n"
+    f"Balanced: n = {n_analysis}"
 )
-ax2.text(0.98, 0.50, stats_text, transform=ax2.transAxes,
+ax2.text(0.98, 0.97, stats_text, transform=ax2.transAxes,
         fontsize=10, verticalalignment='top', horizontalalignment='right',
-        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8, pad=1),
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8, pad=0.8),
         family='monospace')
 
 plt.tight_layout()
@@ -289,18 +280,12 @@ plt.show()
 
 # Print summary
 print("\n" + "="*70)
-print("OFFSET-LOCKED PAC WINDOW EXTRACTION - KEY POINTS")
+print("OFFSET-LOCKED PAC WINDOW EXTRACTION - SUMMARY")
 print("="*70)
-print(f"1. All epochs have fixed recording length: {max_epoch_length:.3f}s ({len(times)} samples @ {sfreq}Hz)")
-print(f"2. PAC window duration: {window_duration*1000:.0f}ms ({window_samples} samples)")
-print(f"3. Window extracted from LAST {window_duration*1000:.0f}ms before each fixation END")
-print(f"4. Epochs < {window_duration*1000:.0f}ms are EXCLUDED (cannot provide full PAC window)")
-print(f"5. Duration threshold: {duration_threshold*1000:.0f}ms splits remaining epochs into short/long")
-print(f"6. Both groups balanced to same N = {min(len(short_durations), len(long_durations))}")
-print(f"7. Window 'slides' to different absolute times depending on fixation duration")
-print(f"8. This ensures PAC is always measured at the SAME relative time (fixation end)")
-print(f"9. Short group: ALL fixations are >= {window_duration*1000:.0f}ms but < {duration_threshold*1000:.0f}ms")
-print(f"10. Long group: ALL fixations are >= {duration_threshold*1000:.0f}ms")
+print(f"Epoch recording length: {max_epoch_length:.3f}s ({len(times)} samples @ {sfreq}Hz)")
+print(f"PAC window: {window_duration*1000:.0f}ms before fixation end")
+print(f"Duration threshold: {duration_threshold*1000:.0f}ms")
+print(f"Balanced analysis groups: {n_analysis} epochs each (short & long)")
 print("="*70)
 
 print("\nDone!")
