@@ -72,21 +72,24 @@ all_durations = merged_df[dur_col].values
 max_epoch_length = times[-1] - times[0]
 print(f"  Epoch length: {max_epoch_length:.3f}s")
 
-# For visualization, show ALL epochs (including those too short for PAC)
+# For visualization, show ALL epochs (including those too short or too long for PAC)
 # But mark which ones would be included in the analysis
 all_durations = merged_df[dur_col].values
+max_duration = times[-1]  # Maximum recordable fixation duration
 
-# Split into groups: too_short, short, long
+# Split into groups: too_short, short, long, too_long
 too_short_mask = all_durations < window_duration
-short_mask = (all_durations >= window_duration) & (all_durations < duration_threshold)
-long_mask = all_durations >= duration_threshold
+short_mask = (all_durations >= window_duration) & (all_durations < duration_threshold) & (all_durations <= max_duration)
+long_mask = (all_durations >= duration_threshold) & (all_durations <= max_duration)
+too_long_mask = all_durations > max_duration
 
 print(f"\n{'='*70}")
 print("Epoch distribution:")
 print(f"{'='*70}")
-print(f"  Too short (< {window_duration*1000:.0f}ms): {np.sum(too_short_mask)} epochs - EXCLUDED from analysis")
+print(f"  Too short (< {window_duration*1000:.0f}ms): {np.sum(too_short_mask)} epochs - EXCLUDED")
 print(f"  Short ({window_duration*1000:.0f}-{duration_threshold*1000:.0f}ms): {np.sum(short_mask)} epochs")
-print(f"  Long (>= {duration_threshold*1000:.0f}ms): {np.sum(long_mask)} epochs")
+print(f"  Long ({duration_threshold*1000:.0f}-{max_duration*1000:.0f}ms): {np.sum(long_mask)} epochs")
+print(f"  Too long (> {max_duration*1000:.0f}ms): {np.sum(too_long_mask)} epochs - EXCLUDED")
 
 # For balanced counts (what would be used in analysis)
 n_analysis = min(np.sum(short_mask), np.sum(long_mask))
@@ -96,6 +99,7 @@ print(f"  Balanced analysis groups: {n_analysis} epochs each")
 all_labels = np.zeros(len(all_durations))
 all_labels[short_mask] = 1  # short = 1
 all_labels[long_mask] = 2   # long = 2
+all_labels[too_long_mask] = 3  # too_long = 3
 # too_short remains 0
 
 # Sort by duration for visualization
@@ -146,21 +150,26 @@ for i, duration in enumerate(sorted_durations):
                      color='lightgray', alpha=0.2, linewidth=0)
 
     # Plot fixation duration with color based on group
-    # Fixation starts at t=0 and ends at t=duration
-    if label == 0:  # Too short - gray
-        fix_color = 'gray'
+    # Fixation starts at t=0 and ends at t=duration (clipped to recorded data)
+    if label == 0:  # Too short - light gray
+        fix_color = 'lightgray'
     elif label == 1:  # Short - green
         fix_color = 'darkgreen'
-    else:  # Long - orange
+    elif label == 2:  # Long - orange
         fix_color = 'darkorange'
+    else:  # Too long (label == 3) - dark gray
+        fix_color = 'darkgray'
 
-    ax1.fill_between([0, duration], i-0.4, i+0.4,
+    # Clip duration to maximum recordable time
+    duration_clipped = min(duration, max_duration)
+
+    ax1.fill_between([0, duration_clipped], i-0.4, i+0.4,
                      color=fix_color, alpha=0.4, linewidth=0)
 
-    # Plot PAC window (red highlight) only for epochs >= window_duration
-    if duration >= window_duration:
+    # Plot PAC window (red highlight) only for valid analysis epochs
+    if label in [1, 2]:  # Only short and long groups
         # PAC window: last N samples before fixation end
-        fixation_end_time = duration
+        fixation_end_time = duration  # Already filtered to be <= max_duration
         end_idx = np.argmin(np.abs(times - fixation_end_time))
         start_idx = max(0, end_idx - window_samples)
 
@@ -173,7 +182,7 @@ for i, duration in enumerate(sorted_durations):
                          color='red', alpha=0.7, linewidth=0)
 
     # Mark fixation end with vertical line
-    ax1.plot([duration, duration], [i-0.4, i+0.4],
+    ax1.plot([duration_clipped, duration_clipped], [i-0.4, i+0.4],
              color='darkblue', linewidth=1, alpha=0.6)
 
 # Add horizontal lines separating groups

@@ -349,7 +349,7 @@ def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_s
 
 def split_epochs_by_duration(merged_df, meg_data, duration_split=None,
                               balance_epochs=True, dur_col="duration",
-                              min_duration=None):
+                              min_duration=None, max_duration=None):
     """
     Split epochs into short/long duration groups.
 
@@ -369,6 +369,9 @@ def split_epochs_by_duration(merged_df, meg_data, duration_split=None,
     min_duration : float or None
         Minimum duration in seconds to include (e.g., for offset-locked PAC window).
         If provided, epochs shorter than this will be excluded before splitting.
+    max_duration : float or None
+        Maximum duration in seconds to include (e.g., epoch recording length).
+        If provided, epochs longer than this will be excluded before splitting.
 
     Returns:
     --------
@@ -391,13 +394,24 @@ def split_epochs_by_duration(merged_df, meg_data, duration_split=None,
     print(f"Initial duration range: [{np.min(durations)*1000:.1f}, {np.max(durations)*1000:.1f}] ms")
     print(f"Duration threshold: {threshold_s*1000:.1f} ms")
 
-    # Filter by minimum duration if provided (for offset-locked analysis)
-    if min_duration is not None:
-        print(f"Filtering to epochs >= {min_duration*1000:.0f}ms (PAC window duration)")
-        valid_duration_mask = durations >= min_duration
-        n_excluded = np.sum(~valid_duration_mask)
-        if n_excluded > 0:
-            print(f"  Excluding {n_excluded}/{len(durations)} epochs shorter than PAC window")
+    # Filter by minimum and maximum duration if provided (for offset-locked analysis)
+    if min_duration is not None or max_duration is not None:
+        valid_duration_mask = np.ones(len(durations), dtype=bool)
+
+        if min_duration is not None:
+            print(f"Filtering to epochs >= {min_duration*1000:.0f}ms (PAC window duration)")
+            valid_duration_mask &= (durations >= min_duration)
+            n_excluded_min = np.sum(durations < min_duration)
+            if n_excluded_min > 0:
+                print(f"  Excluding {n_excluded_min} epochs shorter than PAC window")
+
+        if max_duration is not None:
+            print(f"Filtering to epochs <= {max_duration*1000:.0f}ms (epoch recording length)")
+            valid_duration_mask &= (durations <= max_duration)
+            n_excluded_max = np.sum(durations > max_duration)
+            if n_excluded_max > 0:
+                print(f"  Excluding {n_excluded_max} epochs longer than epoch recording")
+
         merged_df = merged_df[valid_duration_mask].reset_index(drop=True)
         meg_data = meg_data[valid_duration_mask]
         durations = merged_df[dur_col].values
