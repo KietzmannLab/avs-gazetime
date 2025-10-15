@@ -43,9 +43,8 @@ print(f"\nConfiguration:")
 print(f"  Subject: {SUBJECT_ID}")
 print(f"  Event type: {EVENT_TYPE}")
 print(f"  Channel type: {ch_type}")
-print(f"  Time window: {time_window[0]:.3f} - {time_window[1]:.3f}s")
-print(f"  Window duration: {window_duration*1000:.0f}ms")
-print(f"  Duration threshold: {duration_threshold*1000:.0f}ms")
+print(f"  PAC window duration: {window_duration*1000:.0f}ms (last N samples before fixation end)")
+print(f"  Duration threshold: {duration_threshold*1000:.0f}ms (split short/long)")
 print(f"  Sessions: {SESSIONS[:2]}")  # Just first 2 sessions for speed
 
 # Load MEG data (just first 2 sessions for illustration)
