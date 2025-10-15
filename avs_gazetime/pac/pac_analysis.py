@@ -94,11 +94,19 @@ def main():
 
         # Apply the appropriate split
         if DURATION_SPLIT is not None:
+            # Calculate minimum duration for offset-locked analysis
+            min_duration = None
+            if OFFSET_LOCKED:
+                window_duration = time_window[1] - time_window[0]
+                min_duration = window_duration
+                print(f"Offset-locked mode: filtering to epochs >= {min_duration*1000:.0f}ms")
+
             epoch_splits = split_epochs_by_duration(
                 merged_df, meg_data,
                 duration_split=DURATION_SPLIT,
                 balance_epochs=DURATION_BALANCE,
-                dur_col=dur_col
+                dur_col=dur_col,
+                min_duration=min_duration
             )
         elif MEM_SPLIT is not None:
             epoch_splits = split_epochs_by_memorability(

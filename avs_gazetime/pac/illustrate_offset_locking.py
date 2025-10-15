@@ -78,11 +78,15 @@ print(f"\n{'='*70}")
 print("Applying duration split...")
 print(f"{'='*70}")
 
+# For offset-locked, we need to filter epochs shorter than window duration
+min_duration = window_duration  # All fixations must be at least this long
+
 epoch_splits = split_epochs_by_duration(
     merged_df, meg_data,
     duration_split=duration_threshold * 1000,  # Convert to ms
     balance_epochs=DURATION_BALANCE,
-    dur_col=dur_col
+    dur_col=dur_col,
+    min_duration=min_duration  # Filter out epochs shorter than PAC window
 )
 
 # Extract split groups
@@ -290,11 +294,13 @@ print("="*70)
 print(f"1. All epochs have fixed recording length: {max_epoch_length:.3f}s ({len(times)} samples @ {sfreq}Hz)")
 print(f"2. PAC window duration: {window_duration*1000:.0f}ms ({window_samples} samples)")
 print(f"3. Window extracted from LAST {window_duration*1000:.0f}ms before each fixation END")
-print(f"4. Fixations < {window_duration*1000:.0f}ms cannot provide full PAC window")
-print(f"5. Duration threshold: {duration_threshold*1000:.0f}ms splits epochs into short/long")
+print(f"4. Epochs < {window_duration*1000:.0f}ms are EXCLUDED (cannot provide full PAC window)")
+print(f"5. Duration threshold: {duration_threshold*1000:.0f}ms splits remaining epochs into short/long")
 print(f"6. Both groups balanced to same N = {min(len(short_durations), len(long_durations))}")
 print(f"7. Window 'slides' to different absolute times depending on fixation duration")
 print(f"8. This ensures PAC is always measured at the SAME relative time (fixation end)")
+print(f"9. Short group: ALL fixations are >= {window_duration*1000:.0f}ms but < {duration_threshold*1000:.0f}ms")
+print(f"10. Long group: ALL fixations are >= {duration_threshold*1000:.0f}ms")
 print("="*70)
 
 print("\nDone!")

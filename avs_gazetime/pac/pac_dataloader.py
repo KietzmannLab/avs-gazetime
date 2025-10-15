@@ -348,7 +348,8 @@ def split_epochs_by_memorability(merged_df, meg_data, mem_split=None, mem_crop_s
     return results
 
 def split_epochs_by_duration(merged_df, meg_data, duration_split=None,
-                              balance_epochs=True, dur_col="duration"):
+                              balance_epochs=True, dur_col="duration",
+                              min_duration=None):
     """
     Split epochs into short/long duration groups.
 
@@ -365,6 +366,9 @@ def split_epochs_by_duration(merged_df, meg_data, duration_split=None,
         If True, downsample to ensure equal number of epochs in each group.
     dur_col : str
         Name of duration column to use for splitting.
+    min_duration : float or None
+        Minimum duration in seconds to include (e.g., for offset-locked PAC window).
+        If provided, epochs shorter than this will be excluded before splitting.
 
     Returns:
     --------
@@ -384,8 +388,21 @@ def split_epochs_by_duration(merged_df, meg_data, duration_split=None,
     # Get durations
     durations = merged_df[dur_col].values
 
-    print(f"Duration range: [{np.min(durations)*1000:.1f}, {np.max(durations)*1000:.1f}] ms")
+    print(f"Initial duration range: [{np.min(durations)*1000:.1f}, {np.max(durations)*1000:.1f}] ms")
     print(f"Duration threshold: {threshold_s*1000:.1f} ms")
+
+    # Filter by minimum duration if provided (for offset-locked analysis)
+    if min_duration is not None:
+        print(f"Filtering to epochs >= {min_duration*1000:.0f}ms (PAC window duration)")
+        valid_duration_mask = durations >= min_duration
+        n_excluded = np.sum(~valid_duration_mask)
+        if n_excluded > 0:
+            print(f"  Excluding {n_excluded}/{len(durations)} epochs shorter than PAC window")
+        merged_df = merged_df[valid_duration_mask].reset_index(drop=True)
+        meg_data = meg_data[valid_duration_mask]
+        durations = merged_df[dur_col].values
+        print(f"  Remaining epochs: {len(durations)}")
+        print(f"  Filtered duration range: [{np.min(durations)*1000:.1f}, {np.max(durations)*1000:.1f}] ms")
 
     # Create masks
     short_mask = durations < threshold_s
