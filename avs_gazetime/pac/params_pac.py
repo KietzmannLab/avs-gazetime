@@ -1,6 +1,6 @@
 QUANTILES = 80 # 80
 EVENT_TYPE = "saccade"
-TIME_WINDOW =(0.50, 0.400) # in seconds
+TIME_WINDOW = (0.0, 0.400) # in seconds - window duration (offset-locked: last 400ms before fixation end)
 THETA_BAND =(3, 8)
 GAMMA_BAND =(40, 140)
 PAC_METHOD = "modulation_index" #"pac_ozkurt", #"circular_linear_correlation"

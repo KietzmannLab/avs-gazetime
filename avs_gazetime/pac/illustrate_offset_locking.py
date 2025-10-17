@@ -33,7 +33,7 @@ print("Offset-Locked PAC Window Selection - Illustration")
 print("="*70)
 
 # Parameters
-duration_threshold = 0.360  # 350ms for illustration
+duration_threshold = DURATION_SPLIT/1000  # Convert ms to s
 time_window = TIME_WINDOW
 window_duration = time_window[1] - time_window[0]
 sfreq = S_FREQ
@@ -97,6 +97,13 @@ print(f"  Too long (> {max_duration*1000:.0f}ms): {np.sum(too_long_mask)} epochs
 # For balanced counts (what would be used in analysis)
 n_analysis = min(np.sum(short_mask), np.sum(long_mask))
 print(f"  Balanced analysis groups: {n_analysis} epochs each")
+
+# Store the FULL dataset masks and counts for histogram
+full_too_short_mask = too_short_mask.copy()
+full_short_mask = short_mask.copy()
+full_long_mask = long_mask.copy()
+full_durations = all_durations.copy()
+full_n_analysis = n_analysis
 
 # Combine all durations and create labels
 all_labels = np.zeros(len(all_durations))
@@ -172,41 +179,57 @@ for i, duration in enumerate(sorted_durations):
 
     # Plot PAC window (red highlight) only for valid analysis epochs
     if label in [1, 2]:  # Only short and long groups
-        # PAC window: last N samples before fixation end
-        # With ±50ms extension allowance
+        # PAC window: last N samples before fixation end (offset-locked)
+        # With SYMMETRIC ±50ms extension allowance (can extend beyond fixation boundaries)
+
         fixation_end_time = duration  # Already filtered to be <= max_duration
         end_idx = np.argmin(np.abs(times - fixation_end_time))
-
-        # Find fixation onset index (t=0)
         fixation_start_idx = np.argmin(np.abs(times - 0))
+        max_extension_samples = int(0.05 * sfreq)  # 50ms = 25 samples at 500Hz
 
-        # Calculate ideal start index (N samples before fixation end)
+        # Calculate ideal window: N samples ending at fixation offset
         ideal_start_idx = end_idx - window_samples
+        ideal_end_idx = end_idx
 
-        # Check if window extends before fixation onset (into pre-saccade)
+        # Check how much extension is needed before and after fixation
+        extension_before_samples = 0
+        extension_after_samples = 0
+
         if ideal_start_idx < fixation_start_idx:
-            # Extension is needed - visualize it differently
-            extension_start_idx = max(0, ideal_start_idx)
+            extension_before_samples = fixation_start_idx - ideal_start_idx
 
-            # Plot extension region (lighter red with hatching)
-            if extension_start_idx < fixation_start_idx:
-                extension_start_time = times[extension_start_idx]
-                fixation_onset_time = times[fixation_start_idx]
-                ax1.fill_between([extension_start_time, fixation_onset_time], i-0.4, i+0.4,
-                                 color='red', alpha=0.25, linewidth=0, hatch='///', edgecolor='red')
+        # For very short fixations, we might need to extend AFTER fixation end too
+        # This happens when: fixation_duration < window_duration - max_extension
+        fixation_duration_samples = end_idx - fixation_start_idx
+        if window_samples > fixation_duration_samples + max_extension_samples:
+            # Need to extend after fixation end as well
+            extension_after_samples = window_samples - fixation_duration_samples - extension_before_samples
 
-            # Plot main PAC window (within fixation)
-            window_start_time = times[fixation_start_idx]
-            window_end_time = times[end_idx]
-            ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
-                             color='red', alpha=0.5, linewidth=0)
-        else:
-            # No extension needed - plot normally
-            start_idx = ideal_start_idx
-            window_start_time = times[start_idx]
-            window_end_time = times[end_idx]
-            ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
-                             color='red', alpha=0.5, linewidth=0)
+        # Determine actual window boundaries with symmetric extension
+        actual_start_idx = max(0, ideal_start_idx)
+        actual_end_idx = min(len(times) - 1, ideal_end_idx + extension_after_samples)
+
+        # Visualize the window with three regions: pre-extension, main, post-extension
+        window_start_time = times[actual_start_idx]
+        fixation_onset_time = times[fixation_start_idx]
+        fixation_end_time_plot = times[end_idx]
+        window_end_time = times[actual_end_idx]
+
+        # Plot pre-fixation extension (if any)
+        if extension_before_samples > 0 and actual_start_idx < fixation_start_idx:
+            ax1.fill_between([window_start_time, fixation_onset_time], i-0.4, i+0.4,
+                             color='red', alpha=0.25, linewidth=0, hatch='///', edgecolor='red')
+
+        # Plot main PAC window (within fixation)
+        main_start = fixation_onset_time if extension_before_samples > 0 else window_start_time
+        main_end = fixation_end_time_plot if extension_after_samples > 0 else window_end_time
+        ax1.fill_between([main_start, main_end], i-0.4, i+0.4,
+                         color='red', alpha=0.5, linewidth=0)
+
+        # Plot post-fixation extension (if any)
+        if extension_after_samples > 0 and actual_end_idx > end_idx:
+            ax1.fill_between([fixation_end_time_plot, window_end_time], i-0.4, i+0.4,
+                             color='red', alpha=0.25, linewidth=0, hatch='\\\\\\', edgecolor='red')
     # remove y tickslabels
     ax1.set_yticks([])
 
@@ -233,27 +256,24 @@ ax1.axvline(x=0, color='black', linestyle=':', alpha=0.5)
 # ============================================================================
 ax2 = axes[1]
 
+# Use FULL dataset for histogram (not subsampled)
 # Create bins for histogram
-bins = np.linspace(0, sorted_durations.max()*1.1, 40)
+bins = np.linspace(0, full_durations.max()*1.1, 40)
 
-# Plot histograms for all three groups
-too_short_mask = sorted_labels == 0
-short_mask = sorted_labels == 1
-long_mask = sorted_labels == 2
-
-if np.sum(too_short_mask) > 0:
-    ax2.hist(sorted_durations[too_short_mask]*1000, bins=bins*1000,
-            alpha=0.5, color='gray', label=f'Too short (n={np.sum(too_short_mask)})',
+# Plot histograms for all three groups using FULL data
+if np.sum(full_too_short_mask) > 0:
+    ax2.hist(full_durations[full_too_short_mask]*1000, bins=bins*1000,
+            alpha=0.5, color='gray', label=f'Too short (n={np.sum(full_too_short_mask)})',
             edgecolor='black', linewidth=0.5)
 
-if np.sum(short_mask) > 0:
-    ax2.hist(sorted_durations[short_mask]*1000, bins=bins*1000,
-            alpha=0.6, color='darkgreen', label=f'Short (n={np.sum(short_mask)})',
+if np.sum(full_short_mask) > 0:
+    ax2.hist(full_durations[full_short_mask]*1000, bins=bins*1000,
+            alpha=0.6, color='darkgreen', label=f'Short (n={np.sum(full_short_mask)})',
             edgecolor='black', linewidth=0.5)
 
-if np.sum(long_mask) > 0:
-    ax2.hist(sorted_durations[long_mask]*1000, bins=bins*1000,
-            alpha=0.6, color='darkorange', label=f'Long (n={np.sum(long_mask)})',
+if np.sum(full_long_mask) > 0:
+    ax2.hist(full_durations[full_long_mask]*1000, bins=bins*1000,
+            alpha=0.6, color='darkorange', label=f'Long (n={np.sum(full_long_mask)})',
             edgecolor='black', linewidth=0.5)
 
 # Add threshold lines
@@ -270,17 +290,17 @@ ax2.legend(loc='upper right', frameon=True, fontsize=10, fancybox=False, shadow=
 ax2.grid(True, axis='y', alpha=0.3, linestyle='--')
 ax2.set_facecolor('#f0f0f0')
 
-# Add statistics text box
+# Add statistics text box using FULL dataset
 stats_text = (
     f"TOO SHORT (excluded):\n"
-    f"  n = {np.sum(too_short_mask)}\n\n"
+    f"  n = {np.sum(full_too_short_mask)}\n\n"
     f"SHORT (analysis):\n"
-    f"  n = {np.sum(short_mask)}\n"
-    f"  mean = {sorted_durations[short_mask].mean()*1000:.1f} ms\n\n"
+    f"  n = {np.sum(full_short_mask)}\n"
+    f"  mean = {full_durations[full_short_mask].mean()*1000:.1f} ms\n\n"
     f"LONG (analysis):\n"
-    f"  n = {np.sum(long_mask)}\n"
-    f"  mean = {sorted_durations[long_mask].mean()*1000:.1f} ms\n\n"
-    f"Balanced: n = {n_analysis}"
+    f"  n = {np.sum(full_long_mask)}\n"
+    f"  mean = {full_durations[full_long_mask].mean()*1000:.1f} ms\n\n"
+    f"Balanced: n = {full_n_analysis}"
 )
 ax2.text(0.98, 0.97, stats_text, transform=ax2.transAxes,
         fontsize=10, verticalalignment='top', horizontalalignment='right',

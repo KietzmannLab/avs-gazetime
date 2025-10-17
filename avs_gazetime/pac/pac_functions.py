@@ -419,7 +419,7 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
     if offset_locked:
         # For offset-locked: Extract last N samples before fixation end
         # N = window_duration * sfreq
-        # Allow ±50ms extension beyond fixation boundaries (leveraging 4-fold ERF removal)
+        # Allow SYMMETRIC ±50ms extension beyond fixation boundaries (leveraging 4-fold ERF removal)
         n_samples = int(window_duration * sfreq)
         max_extension_samples = int(0.05 * sfreq)  # 50ms at 500Hz = 25 samples
 
@@ -438,29 +438,39 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
             # Find fixation onset index (t=0)
             fixation_start_idx = np.argmin(np.abs(times - 0))
 
-            # Calculate ideal start index (N samples before fixation end)
+            # Calculate fixation duration in samples
+            fixation_duration_samples = end_idx - fixation_start_idx
+
+            # Calculate ideal window: N samples ending at fixation offset
             ideal_start_idx = end_idx - n_samples
+            ideal_end_idx = end_idx
 
-            # Check if window would extend before fixation onset
+            # Check extensions needed before and after fixation
+            extension_before = 0
+            extension_after = 0
+
             if ideal_start_idx < fixation_start_idx:
-                # Calculate how much extension is needed into pre-saccade
-                extension_needed = fixation_start_idx - ideal_start_idx
+                # Need to extend before fixation onset
+                extension_before = fixation_start_idx - ideal_start_idx
 
-                if extension_needed <= max_extension_samples:
-                    # Extension is within ±50ms allowance - use ideal window
-                    start_idx = max(0, ideal_start_idx)
-                else:
-                    # Extension exceeds allowance - center window around fixation
-                    # This should rarely happen given the filtering in pac_dataloader
-                    fixation_center = (fixation_start_idx + end_idx) // 2
-                    start_idx = max(0, fixation_center - n_samples // 2)
+            # For very short fixations, might need to extend after fixation end too
+            # This happens when: fixation_duration < window_duration - max_extension
+            if n_samples > fixation_duration_samples + extension_before:
+                # Need to extend after fixation end
+                extension_after = n_samples - fixation_duration_samples - extension_before
+
+            # Check if extensions are within symmetric ±50ms allowance
+            total_extension = extension_before + extension_after
+            if total_extension <= 2 * max_extension_samples:
+                # Extensions are within allowance - use ideal window with symmetric extension
+                start_idx = max(0, ideal_start_idx)
+                actual_end_idx = min(theta_phase.shape[1] - 1, ideal_end_idx + extension_after)
             else:
-                # No pre-fixation extension needed
-                start_idx = ideal_start_idx
-
-            # Ensure we don't exceed data bounds
-            start_idx = max(0, start_idx)
-            actual_end_idx = min(start_idx + n_samples, theta_phase.shape[1])
+                # Extensions exceed allowance - center window around fixation
+                # This should rarely happen given the filtering in pac_dataloader
+                fixation_center = (fixation_start_idx + end_idx) // 2
+                start_idx = max(0, fixation_center - n_samples // 2)
+                actual_end_idx = min(theta_phase.shape[1] - 1, start_idx + n_samples)
 
             # Extract the window
             window_length = actual_end_idx - start_idx
