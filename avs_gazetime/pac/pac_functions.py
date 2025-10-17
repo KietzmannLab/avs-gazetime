@@ -419,7 +419,9 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
     if offset_locked:
         # For offset-locked: Extract last N samples before fixation end
         # N = window_duration * sfreq
+        # Allow ±50ms extension beyond fixation boundaries (leveraging 4-fold ERF removal)
         n_samples = int(window_duration * sfreq)
+        max_extension_samples = int(0.05 * sfreq)  # 50ms at 500Hz = 25 samples
 
         # Extract the last n_samples for each epoch
         theta_phase_windowed = np.zeros((theta_phase.shape[0], n_samples))
@@ -433,12 +435,42 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
             # Find the index in times vector closest to fixation end
             end_idx = np.argmin(np.abs(times - fixation_end_time))
 
-            # Calculate start index (N samples before end)
-            start_idx = max(0, end_idx - n_samples)
+            # Find fixation onset index (t=0)
+            fixation_start_idx = np.argmin(np.abs(times - 0))
+
+            # Calculate ideal start index (N samples before fixation end)
+            ideal_start_idx = end_idx - n_samples
+
+            # Check if window would extend before fixation onset
+            if ideal_start_idx < fixation_start_idx:
+                # Calculate how much extension is needed into pre-saccade
+                extension_needed = fixation_start_idx - ideal_start_idx
+
+                if extension_needed <= max_extension_samples:
+                    # Extension is within ±50ms allowance - use ideal window
+                    start_idx = max(0, ideal_start_idx)
+                else:
+                    # Extension exceeds allowance - center window around fixation
+                    # This should rarely happen given the filtering in pac_dataloader
+                    fixation_center = (fixation_start_idx + end_idx) // 2
+                    start_idx = max(0, fixation_center - n_samples // 2)
+            else:
+                # No pre-fixation extension needed
+                start_idx = ideal_start_idx
+
+            # Ensure we don't exceed data bounds
+            start_idx = max(0, start_idx)
+            actual_end_idx = min(start_idx + n_samples, theta_phase.shape[1])
 
             # Extract the window
-            theta_phase_windowed[i, :] = theta_phase[i, start_idx:end_idx]
-            gamma_amplitude_windowed[i, :] = gamma_amplitude[i, start_idx:end_idx]
+            window_length = actual_end_idx - start_idx
+            theta_phase_windowed[i, :window_length] = theta_phase[i, start_idx:actual_end_idx]
+            gamma_amplitude_windowed[i, :window_length] = gamma_amplitude[i, start_idx:actual_end_idx]
+
+            # Pad with zeros if window is shorter than n_samples (shouldn't happen often)
+            if window_length < n_samples:
+                theta_phase_windowed[i, window_length:] = 0
+                gamma_amplitude_windowed[i, window_length:] = 0
 
         theta_phase = theta_phase_windowed
         gamma_amplitude = gamma_amplitude_windowed
@@ -448,6 +480,7 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
 
         if verbose:
             print(f"Extracted last {n_samples} samples (window duration: {window_duration}s) before fixation end")
+            print(f"  Allowance: ±{max_extension_samples} samples (±50ms) beyond fixation boundaries")
     else:
         # For onset-locked: Use standard time masking
         times_mask = (times >= time_window[0]) & (times <= time_window[1])

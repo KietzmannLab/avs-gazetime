@@ -78,16 +78,19 @@ all_durations = merged_df[dur_col].values
 max_duration = times[-1]  # Maximum recordable fixation duration
 
 # Split into groups: too_short, short, long, too_long
-too_short_mask = all_durations < window_duration
-short_mask = (all_durations >= window_duration) & (all_durations < duration_threshold) & (all_durations <= max_duration)
+# With ±50ms extension allowance, minimum duration is (window_duration - 0.1)
+min_duration_with_extension = window_duration - 0.1
+too_short_mask = all_durations < min_duration_with_extension
+short_mask = (all_durations >= min_duration_with_extension) & (all_durations < duration_threshold) & (all_durations <= max_duration)
 long_mask = (all_durations >= duration_threshold) & (all_durations <= max_duration)
 too_long_mask = all_durations > max_duration
 
 print(f"\n{'='*70}")
 print("Epoch distribution:")
 print(f"{'='*70}")
-print(f"  Too short (< {window_duration*1000:.0f}ms): {np.sum(too_short_mask)} epochs - EXCLUDED")
-print(f"  Short ({window_duration*1000:.0f}-{duration_threshold*1000:.0f}ms): {np.sum(short_mask)} epochs")
+print(f"  PAC window: {window_duration*1000:.0f}ms with ±50ms extension allowance")
+print(f"  Too short (< {min_duration_with_extension*1000:.0f}ms): {np.sum(too_short_mask)} epochs - EXCLUDED")
+print(f"  Short ({min_duration_with_extension*1000:.0f}-{duration_threshold*1000:.0f}ms): {np.sum(short_mask)} epochs")
 print(f"  Long ({duration_threshold*1000:.0f}-{max_duration*1000:.0f}ms): {np.sum(long_mask)} epochs")
 print(f"  Too long (> {max_duration*1000:.0f}ms): {np.sum(too_long_mask)} epochs - EXCLUDED")
 
@@ -170,17 +173,40 @@ for i, duration in enumerate(sorted_durations):
     # Plot PAC window (red highlight) only for valid analysis epochs
     if label in [1, 2]:  # Only short and long groups
         # PAC window: last N samples before fixation end
+        # With ±50ms extension allowance
         fixation_end_time = duration  # Already filtered to be <= max_duration
         end_idx = np.argmin(np.abs(times - fixation_end_time))
-        start_idx = max(0, end_idx - window_samples)
 
-        # Get actual time values for the window
-        window_start_time = times[start_idx]
-        window_end_time = times[end_idx]
+        # Find fixation onset index (t=0)
+        fixation_start_idx = np.argmin(np.abs(times - 0))
 
-        # Plot PAC window (red highlight)
-        ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
-                         color='red', alpha=0.5, linewidth=0)
+        # Calculate ideal start index (N samples before fixation end)
+        ideal_start_idx = end_idx - window_samples
+
+        # Check if window extends before fixation onset (into pre-saccade)
+        if ideal_start_idx < fixation_start_idx:
+            # Extension is needed - visualize it differently
+            extension_start_idx = max(0, ideal_start_idx)
+
+            # Plot extension region (lighter red with hatching)
+            if extension_start_idx < fixation_start_idx:
+                extension_start_time = times[extension_start_idx]
+                fixation_onset_time = times[fixation_start_idx]
+                ax1.fill_between([extension_start_time, fixation_onset_time], i-0.4, i+0.4,
+                                 color='red', alpha=0.25, linewidth=0, hatch='///', edgecolor='red')
+
+            # Plot main PAC window (within fixation)
+            window_start_time = times[fixation_start_idx]
+            window_end_time = times[end_idx]
+            ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
+                             color='red', alpha=0.5, linewidth=0)
+        else:
+            # No extension needed - plot normally
+            start_idx = ideal_start_idx
+            window_start_time = times[start_idx]
+            window_end_time = times[end_idx]
+            ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
+                             color='red', alpha=0.5, linewidth=0)
     # remove y tickslabels
     ax1.set_yticks([])
 
