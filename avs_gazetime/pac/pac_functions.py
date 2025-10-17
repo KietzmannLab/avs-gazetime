@@ -417,11 +417,10 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
 
     # Apply time window extraction
     if offset_locked:
-        # For offset-locked: Extract last N samples before fixation end
-        # N = window_duration * sfreq
-        # Allow SYMMETRIC ±50ms extension beyond fixation boundaries (leveraging 4-fold ERF removal)
+        # For offset-locked: Extract window ending at fixation offset + 75ms
+        # This allows fixations as short as (window_duration - 75ms)
         n_samples = int(window_duration * sfreq)
-        max_extension_samples = int(0.05 * sfreq)  # 50ms at 500Hz = 25 samples
+        post_fixation_extension = 0.075  # 75ms post-fixation extension
 
         # Extract the last n_samples for each epoch
         theta_phase_windowed = np.zeros((theta_phase.shape[0], n_samples))
@@ -432,52 +431,25 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
             # Duration is relative to fixation onset (t=0 in times vector)
             fixation_end_time = valid_durations[i]
 
-            # Find the index in times vector closest to fixation end
-            end_idx = np.argmin(np.abs(times - fixation_end_time))
+            # PAC window ends at fixation_offset + 75ms
+            pac_window_end_time = fixation_end_time + post_fixation_extension
 
-            # Find fixation onset index (t=0)
-            fixation_start_idx = np.argmin(np.abs(times - 0))
+            # Find the index in times vector closest to PAC window end
+            end_idx = np.argmin(np.abs(times - pac_window_end_time))
 
-            # Calculate fixation duration in samples
-            fixation_duration_samples = end_idx - fixation_start_idx
+            # Calculate window start: N samples before PAC window end
+            start_idx = end_idx - n_samples
 
-            # Calculate ideal window: N samples ending at fixation offset
-            ideal_start_idx = end_idx - n_samples
-            ideal_end_idx = end_idx
-
-            # Check extensions needed before and after fixation
-            extension_before = 0
-            extension_after = 0
-
-            if ideal_start_idx < fixation_start_idx:
-                # Need to extend before fixation onset
-                extension_before = fixation_start_idx - ideal_start_idx
-
-            # For very short fixations, might need to extend after fixation end too
-            # This happens when: fixation_duration < window_duration - max_extension
-            if n_samples > fixation_duration_samples + extension_before:
-                # Need to extend after fixation end
-                extension_after = n_samples - fixation_duration_samples - extension_before
-
-            # Check if extensions are within symmetric ±50ms allowance
-            total_extension = extension_before + extension_after
-            if total_extension <= 2 * max_extension_samples:
-                # Extensions are within allowance - use ideal window with symmetric extension
-                start_idx = max(0, ideal_start_idx)
-                actual_end_idx = min(theta_phase.shape[1] - 1, ideal_end_idx + extension_after)
-            else:
-                # Extensions exceed allowance - center window around fixation
-                # This should rarely happen given the filtering in pac_dataloader
-                fixation_center = (fixation_start_idx + end_idx) // 2
-                start_idx = max(0, fixation_center - n_samples // 2)
-                actual_end_idx = min(theta_phase.shape[1] - 1, start_idx + n_samples)
+            # Ensure we don't exceed data bounds
+            start_idx = max(0, start_idx)
+            actual_end_idx = min(theta_phase.shape[1] - 1, end_idx)
 
             # Extract the window
             window_length = actual_end_idx - start_idx
             theta_phase_windowed[i, :window_length] = theta_phase[i, start_idx:actual_end_idx]
             gamma_amplitude_windowed[i, :window_length] = gamma_amplitude[i, start_idx:actual_end_idx]
 
-            # Pad with zeros if window is shorter than n_samples (shouldn't happen often)
+            # Pad with zeros if window is shorter than n_samples (shouldn't happen with proper filtering)
             if window_length < n_samples:
                 theta_phase_windowed[i, window_length:] = 0
                 gamma_amplitude_windowed[i, window_length:] = 0
@@ -489,8 +461,9 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
         times_mask = np.ones(n_samples, dtype=bool)
 
         if verbose:
-            print(f"Extracted last {n_samples} samples (window duration: {window_duration}s) before fixation end")
-            print(f"  Allowance: ±{max_extension_samples} samples (±50ms) beyond fixation boundaries")
+            print(f"Extracted window ending at fixation offset + 75ms")
+            print(f"  Window duration: {window_duration}s ({n_samples} samples)")
+            print(f"  Allows fixations >= {(window_duration - post_fixation_extension)*1000:.0f}ms")
     else:
         # For onset-locked: Use standard time masking
         times_mask = (times >= time_window[0]) & (times <= time_window[1])

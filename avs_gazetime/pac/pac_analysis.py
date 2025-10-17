@@ -99,11 +99,11 @@ def main():
             max_duration = None
             if OFFSET_LOCKED:
                 window_duration = time_window[1] - time_window[0]
-                # Allow ±50ms extension beyond fixation boundaries (100ms total)
-                min_duration = window_duration - 0.1
+                # PAC window ends at fixation_offset + 75ms
+                min_duration = window_duration - 0.075
                 max_duration = times[-1]  # Maximum recordable fixation duration
                 print(f"Offset-locked mode: filtering to epochs >= {min_duration*1000:.0f}ms and <= {max_duration*1000:.0f}ms")
-                print(f"  (PAC window: {window_duration*1000:.0f}ms with ±50ms extension allowance)")
+                print(f"  (PAC window: {window_duration*1000:.0f}ms ending at fixation offset + 75ms)")
 
             epoch_splits = split_epochs_by_duration(
                 merged_df, meg_data,
