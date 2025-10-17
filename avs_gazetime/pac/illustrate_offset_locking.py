@@ -33,7 +33,7 @@ print("Offset-Locked PAC Window Selection - Illustration")
 print("="*70)
 
 # Parameters
-duration_threshold = 0.350  # 350ms for illustration
+duration_threshold = 0.360  # 350ms for illustration
 time_window = TIME_WINDOW
 window_duration = time_window[1] - time_window[0]
 sfreq = S_FREQ
@@ -127,8 +127,9 @@ if len(sorted_durations) > n_epochs_to_show:
 print(f"\n{'='*70}")
 print("Creating visualization...")
 print(f"{'='*70}")
-
-fig, axes = plt.subplots(1, 2, figsize=(16, 10))
+# context poster
+sns.set_context("poster")
+fig, axes = plt.subplots(1, 2, figsize=(10, 8))
 
 # ============================================================================
 # Panel 1: Offset-locked window selection with heatmap-style visualization
@@ -179,41 +180,27 @@ for i, duration in enumerate(sorted_durations):
 
         # Plot PAC window (red highlight)
         ax1.fill_between([window_start_time, window_end_time], i-0.4, i+0.4,
-                         color='red', alpha=0.7, linewidth=0)
+                         color='red', alpha=0.5, linewidth=0)
+    # remove y tickslabels
+    ax1.set_yticks([])
 
     # Mark fixation end with vertical line
     ax1.plot([duration_clipped, duration_clipped], [i-0.4, i+0.4],
              color='darkblue', linewidth=1, alpha=0.6)
 
 # Add horizontal lines separating groups
-ax1.axhline(y=split_idx_1-0.5, color='black', linewidth=2, linestyle='--', alpha=0.5, zorder=10)
-ax1.axhline(y=split_idx_2-0.5, color='black', linewidth=2, linestyle='--', alpha=0.5, zorder=10)
+ax1.axhline(y=split_idx_1-0.5, color='black' ,linestyle='--', alpha=0.5, zorder=10)
+ax1.axhline(y=split_idx_2-0.5, color='black' ,linestyle='--', alpha=0.5, zorder=10)
 
-ax1.set_xlabel('Time [s]', fontsize=14, fontweight='bold')
-ax1.set_ylabel('Fixation Epochs [sorted by duration]', fontsize=14, fontweight='bold')
-ax1.set_title('Offset-Locked PAC Window Selection', fontsize=16, fontweight='bold', pad=20)
-ax1.set_xlim(-0.2, 0.8)  # Trim to -200ms to 800ms
+ax1.set_xlabel('time [s]')
+ax1.set_ylabel('fixation epochs [sorted by duration]')
+ax1.set_title('Offset-Locked PAC window')
+ax1.set_xlim(-0.2, 0.5)  # Trim to -200ms to 800ms
 ax1.set_ylim(-1, n_epochs)
 
 # Add fixation onset line
-ax1.axvline(x=0, color='black', linewidth=2, linestyle=':', alpha=0.5)
+ax1.axvline(x=0, color='black', linestyle=':', alpha=0.5)
 
-# Add legend
-from matplotlib.patches import Patch
-from matplotlib.lines import Line2D
-legend_elements = [
-    Patch(facecolor='gray', alpha=0.4, label='Too short'),
-    Patch(facecolor='darkgreen', alpha=0.4, label='Short'),
-    Patch(facecolor='darkorange', alpha=0.4, label='Long'),
-    Patch(facecolor='red', alpha=0.7, label=f'PAC window'),
-    Line2D([0], [0], color='black', linewidth=2, linestyle=':', alpha=0.5,
-           label='Fixation onset')
-]
-ax1.legend(handles=legend_elements, loc='upper right', frameon=True,
-          fontsize=10, fancybox=False, shadow=False)
-
-ax1.grid(True, axis='x', alpha=0.3, linestyle='--')
-ax1.set_facecolor('#f0f0f0')
 
 # ============================================================================
 # Panel 2: Duration distributions and window extraction illustration

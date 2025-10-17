@@ -136,7 +136,7 @@ def aggregate_pac_results(chunks_dir, output_fname=None):
     if 'split_group' in aggregated_df.columns:
         print("\nBy split group:")
         summary = aggregated_df.groupby('split_group').agg({
-            'pac': ['count', 'mean', 'std', 'min', 'max'],
+            'pac': ['count', 'mean', "median", 'std', 'min', 'max'],
             'n_epochs': 'first'
         })
         print(summary)

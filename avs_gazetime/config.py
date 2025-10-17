@@ -80,7 +80,7 @@ except KeyError:
     subject_id = 4
     print("subject_id not found in environment variables")
     # set sebug to True
-    debug = False
+    debug = True
 try:
     ch_type = os.environ["CH_TYPE_GAZETIME"]
     print(f"ch_type: {ch_type}")

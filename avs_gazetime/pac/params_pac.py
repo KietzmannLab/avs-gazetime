@@ -1,6 +1,6 @@
 QUANTILES = 80 # 80
 EVENT_TYPE = "saccade"
-TIME_WINDOW =(0.150, 0.400) # in seconds
+TIME_WINDOW =(0.50, 0.400) # in seconds
 THETA_BAND =(3, 8)
 GAMMA_BAND =(40, 140)
 PAC_METHOD = "modulation_index" #"pac_ozkurt", #"circular_linear_correlation"
@@ -18,10 +18,10 @@ THETA_STEPS = 1
 GAMMA_STEPS = 15
 
 # Memorability-based epoch splitting
-MEM_SPLIT = "40/40"  # Options: None, "50/50", "25/25", "33/33", etc. Format: "bottom_percent/top_percent"
+MEM_SPLIT = None#"40/40"  # Options: None, "50/50", "25/25", "33/33", etc. Format: "bottom_percent/top_percent"
 MEM_CROP_SIZE = 100  # Crop size in pixels for memorability analysis (must match precomputed scores)
 
 # Duration-based epoch splitting
-DURATION_SPLIT = None  # Threshold in ms (e.g., 350, 400) or None to disable
+DURATION_SPLIT = 400  # Threshold in ms (e.g., 350, 400) or None to disable
 DURATION_BALANCE = True  # Balance sample sizes between short/long groups
-OFFSET_LOCKED = False  # If True, time-lock to fixation offset (end) instead of onset
+OFFSET_LOCKED = True  # If True, time-lock to fixation offset (end) instead of onset

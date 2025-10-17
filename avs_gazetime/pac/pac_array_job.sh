@@ -27,7 +27,7 @@
 # NOTE: The SLURM array indices (0-N) must match the number of chunks minus 1
 # ============================================================================
 
-#SBATCH --time=2:00:00 # Run time
+#SBATCH --time=1:30:00 # Run time
 #SBATCH --nodes=1
 #SBATCH --mem=100G # Memory per array task
 #SBATCH -c 30 # Cores per array task
