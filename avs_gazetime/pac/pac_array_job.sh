@@ -29,8 +29,8 @@
 
 #SBATCH --time=1:30:00 # Run time
 #SBATCH --nodes=1
-#SBATCH --mem=100G # Memory per array task
-#SBATCH -c 30 # Cores per array task
+#SBATCH --mem=90G # Memory per array task
+#SBATCH -c 20 # Cores per array task
 #SBATCH -p workq
 #SBATCH --job-name=wtpac
 #SBATCH --error=error_pac_%A_%a.err

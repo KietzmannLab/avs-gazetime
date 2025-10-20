@@ -281,7 +281,7 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
                        plot=False, verbose=True, durations=None,
                        method='modulation_index', sessions=None, random_seed=42,
                        surrogate_style='phase_shuffle', theta_data_prefiltered=None,
-                       gamma_data_prefiltered=None, offset_locked=False):
+                       gamma_data_prefiltered=None, offset_locked=False,  post_fixation_extension = 0.075):  # 75ms post-fixation extension):
     """
     Compute phase-amplitude coupling using the Hilbert transform for a specific channel.
 
@@ -327,6 +327,8 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
         If True, extract PAC window relative to fixation offset (end) instead of onset.
         Requires durations to be provided. The PAC window will be the last N samples
         before fixation end, where N = (time_window[1] - time_window[0]) * sfreq.
+    - post_fixation_extension: float
+        Additional time in seconds to extend the PAC window beyond fixation offset. only for offset_locked=True.
 
     Returns:
     - z_scores: float
@@ -389,12 +391,13 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
     window_duration = time_window[1] - time_window[0]
 
     if offset_locked:
-        valid_epochs = durations >= window_duration
+        valid_epochs = durations + post_fixation_extension >= window_duration
         if np.sum(valid_epochs) == 0:
+            print(durations)
             raise ValueError(f"No valid epochs found. All epochs are shorter than the PAC window duration ({window_duration}s).")
     else:
         valid_epochs = durations > time_window[1]
-        if np.sum(valid_epochs) == 0:
+        if np.sum(valid_epochs) == 0: 
             raise ValueError("No valid epochs found. All epochs are shorter than the time window.")
 
     # Apply valid epoch mask
@@ -420,7 +423,7 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
         # For offset-locked: Extract window ending at fixation offset + 75ms
         # This allows fixations as short as (window_duration - 75ms)
         n_samples = int(window_duration * sfreq)
-        post_fixation_extension = 0.075  # 75ms post-fixation extension
+      
 
         # Extract the last n_samples for each epoch
         theta_phase_windowed = np.zeros((theta_phase.shape[0], n_samples))
@@ -449,10 +452,6 @@ def compute_pac_hilbert(data, sfreq, channel, theta_band=(5, 10), gamma_band=(60
             theta_phase_windowed[i, :window_length] = theta_phase[i, start_idx:actual_end_idx]
             gamma_amplitude_windowed[i, :window_length] = gamma_amplitude[i, start_idx:actual_end_idx]
 
-            # Pad with zeros if window is shorter than n_samples (shouldn't happen with proper filtering)
-            if window_length < n_samples:
-                theta_phase_windowed[i, window_length:] = 0
-                gamma_amplitude_windowed[i, window_length:] = 0
 
         theta_phase = theta_phase_windowed
         gamma_amplitude = gamma_amplitude_windowed
