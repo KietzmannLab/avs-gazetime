@@ -27,15 +27,15 @@
 # NOTE: The SLURM array indices (0-N) must match the number of chunks minus 1
 # ============================================================================
 
-#SBATCH --time=1:30:00 # Run time
+#SBATCH --time=1:10:00 # Run time
 #SBATCH --nodes=1
-#SBATCH --mem=90G # Memory per array task
-#SBATCH -c 20 # Cores per array task
+#SBATCH --mem=60G # Memory per array task
+#SBATCH -c 10 # Cores per array task
 #SBATCH -p workq
 #SBATCH --job-name=wtpac
 #SBATCH --error=error_pac_%A_%a.err
 #SBATCH --output=output_pac_%A_%a.out
-#SBATCH --array=0-99 # Default: 100 chunks for memory efficiency (override with --array=0-N)
+#SBATCH --array=0-199 # Default: 200 chunks for memory efficiency (override with --array=0-N)
 #SBATCH --requeue
 
 echo "Running in shell: $SHELL"
@@ -58,10 +58,10 @@ SUBJECT=${SUBJECT_ID:-1}
 export SUBJECT_ID_GAZETIME=$SUBJECT
 export CH_TYPE_GAZETIME=$CH_TYPE
 
-# Get total number of chunks from environment or default to 100
-# SLURM_ARRAY_TASK_COUNT is the number of array tasks (e.g., array=0-99 means 100 tasks)
-# Default of 100 chunks provides good balance between speed and memory for STC analysis
-TOTAL_CHUNKS=${CHUNKS:-${SLURM_ARRAY_TASK_COUNT:-100}}
+# Get total number of chunks from environment or default to 200
+# SLURM_ARRAY_TASK_COUNT is the number of array tasks (e.g., array=0-
+# Default of 200 chunks provides good balance between speed and memory for STC analysis
+TOTAL_CHUNKS=${CHUNKS:-${SLURM_ARRAY_TASK_COUNT:-200}}
 
 
 echo "Running subject $SUBJECT_ID_GAZETIME with $CH_TYPE_GAZETIME channels"

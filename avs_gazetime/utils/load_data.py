@@ -24,6 +24,17 @@ from avs_gazetime.config import (
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def clip_outliers(data, std_threshold=2, verbose=True):
+    """Clip outliers beyond specified standard deviations."""
+    mean = np.mean(data)
+    median = np.median(data)
+    std = np.std(data)
+    if verbose:
+        print(f"Clipping outliers: mean={mean:.3f}, std={std:.3f}, threshold={std_threshold}, median={median:.3f}")
+    lower_bound = mean - std_threshold * std
+    upper_bound = mean + std_threshold * std
+    return np.clip(data, lower_bound, upper_bound)
+
 def get_meg_filepath(session: str, event_type: str, subject_name=None) -> Path:
     """Get the file path for MEG data."""
     if subject_name:

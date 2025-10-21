@@ -52,13 +52,41 @@ def load_meg_data(event_type, ch_type, sessions, channel_idx=None, remove_erfs=N
             )
 
         # Load MEG data for saccades
-        meg_data = load_data.process_meg_data_for_roi(ch_type, "saccade", sessions, apply_median_scale=True, channel_idx=channel_idx)
+        meg_data = load_data.process_meg_data_for_roi(ch_type, "saccade", sessions, apply_median_scale=True, channel_idx=channel_idx, scale_with_std=False)
 
         # Apply index mask to meg data
         meg_data = meg_data[merged_df.index, :, :]
-
+        
+        
         # Reset index after masking
         merged_df.reset_index(drop=True, inplace=True)
+        
+        # max per epoch 
+        max_per_epoch = np.max(np.abs(meg_data), axis=(1, 2))
+        threshold = np.percentile(max_per_epoch, 99)
+        good_epochs = max_per_epoch < threshold
+
+        print(f"Rejecting {(~good_epochs).sum()} / {len(good_epochs)} epochs (max amplitude > {threshold:.3f})")
+        
+      
+        # Apply rejection to both MEG data and behavioral dataframe
+        meg_data = meg_data[good_epochs]
+        merged_df = merged_df[good_epochs].reset_index(drop=True)
+        
+        # remove epochs that dont correlate well with the median
+        # Calculate median ERF for the epochs
+        median_erf = np.median(meg_data, axis=0)
+        # Calculate correlation of each epoch with the median ERF
+        correlations = np.array([np.corrcoef(epoch.flatten(), median_erf.flatten())[0, 1] for epoch in meg_data])
+        # Threshold for correlation (e.g., 0.5)
+        correlation_threshold = np.percentile(correlations, 1)
+        # Keep epochs with correlation above the threshold
+        good_epochs = correlations > correlation_threshold
+        print(f"Rejecting {(~good_epochs).sum()} / {len(good_epochs)} epochs (correlation < {correlation_threshold:.3f})")
+        # Apply rejection to both MEG data and behavioral dataframe
+        meg_data = meg_data[good_epochs]
+        merged_df = merged_df[good_epochs].reset_index(drop=True)
+
 
         # ERF removal sequence: Start at saccade onset, end at fixation onset
         # We progressively roll forward through events, removing ERFs, then roll back
