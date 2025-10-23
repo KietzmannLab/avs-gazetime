@@ -397,7 +397,7 @@ def plot_temporal_generalization(tg_results, output_dir, ch_type='mag'):
 def main():
     """Main integration function."""
     print("Loading memorability decoding results...")
-    ch_types = ["mag"]#, "grad"]  #
+    ch_types = ["mag", "grad"]  #
     for ch_type in ch_types:
         # Load results
         tp_results, tg_results = load_subject_results(ch_type=ch_type)

@@ -13,7 +13,7 @@ N_FOLDS = 5
 N_JOBS = -2
 
 # Memorability parameters
-MEMORABILITY_TARGETS = [ "memorability","mem_relative",]
+MEMORABILITY_TARGETS = [ "memorability"]#,"mem_relative",]
 CROP_SIZE_PIX = 100  # Use 100px memorability estimates
 MODEL_TASK = "regression"  # Use regression for continuous memorability scores
 
@@ -30,7 +30,7 @@ SCALER = "robust"
 LOWPASS_FILTER = False # boxcar filter at 30Hz
 
 # Temporal generalization settings
-TEMPORAL_GENERALIZATION = True
+TEMPORAL_GENERALIZATION = False
 TG_DECIM = 5  # Additional decimation for temporal generalization
 
 # Optimization parameters

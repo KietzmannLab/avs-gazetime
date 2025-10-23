@@ -21,7 +21,7 @@ from avs_gazetime.decoding.decoding_params import MEMORABILITY_TARGETS
 from avs_gazetime.memorability.memorability_analysis_params import NUM_QUARTILES, Q_LABELS, SUBJECTS
 
 
-def load_prediction_data(subjects, target_col, ch_type="mag"):
+def load_prediction_data(subjects, target_col, ch_type="grad"):
     """Load prediction data for all subjects."""
     all_data = []
 
@@ -126,23 +126,23 @@ def plot_correlation_over_time(corr_df, output_dir, target_col):
     ax.axvline(x=0, color='k', linestyle='--', alpha=0.5)
 
     # Find and annotate peak
-    peak_idx = grand_avg['mean'].idxmax()
-    peak_time = grand_avg.loc[peak_idx, 'meg_time']
-    peak_corr = grand_avg.loc[peak_idx, 'mean']
+    #peak_idx = grand_avg['mean'].idxmax()
+    #peak_time = grand_avg.loc[peak_idx, 'meg_time']
+    #peak_corr = grand_avg.loc[peak_idx, 'mean']
 
-    ax.annotate(
-        f'Peak: r={peak_corr:.3f}\nat {peak_time:.0f}ms',
-        xy=(peak_time, peak_corr),
-        xytext=(10, 10),
-        textcoords='offset points',
-        ha='left',
-        bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
-        arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0')
-    )
+    # ax.annotate(
+    #     f'Peak: r={peak_corr:.3f}\nat {peak_time:.0f}ms',
+    #     xy=(peak_time, peak_corr),
+    #     xytext=(10, 10),
+    #     textcoords='offset points',
+    #     ha='left',
+    #     bbox=dict(boxstyle='round,pad=0.3', facecolor='yellow', alpha=0.7),
+    #     arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0')
+    # )
 
-    ax.set_xlabel('MEG time (ms)')
-    ax.set_ylabel('Correlation (r)\nPredicted memorability vs. Duration')
-    ax.set_title(f'Memorability Prediction-Duration Correlation: {target_col}')
+    ax.set_xlabel('MEG time [ms]')
+    ax.set_ylabel('correlation [r]')
+    ax.set_title(f'fixation duration from MEG predicted memorability')
     ax.legend(frameon=False)
     ax.grid(True, alpha=0.3)
 
@@ -234,10 +234,10 @@ def plot_quartile_analysis(predictions_df, corr_df, output_dir, target_col):
         join=False
     )
 
-    ax.set_xlabel("predicted memorability quantile")
+    ax.set_xlabel("predicted memorability [quantile bin]")
     ax.set_xticklabels(Q_LABELS + 1)
     ax.set_ylabel("mean fixation duration [ms]")
-    ax.set_title(f'Duration by Predicted Memorability\n(at peak timepoint per subject): {target_col}')
+    ax.set_title(f'fixation duration from MEG predicted memorability')
 
     plt.tight_layout()
     sns.despine()

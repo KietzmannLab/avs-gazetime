@@ -2,7 +2,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --mem=450G
-#SBATCH --cpus-per-task=60
+#SBATCH --cpus-per-task=20
 
 #SBATCH -p klab-cpu
 #SBATCH --job-name=memdecode
@@ -22,10 +22,10 @@ eval "$(conda shell.bash hook)"
 conda activate avs
 
 # Channel types to process
-ch_types="mag"
+ch_types="ventral"
 
 # Base paths
-gazetime_path="/home/student/p/psulewski/AVS-GazeTime/avs_gazetime"
+gazetime_path="/home/student/p/psulewski/avs-gazetime/avs_gazetime"
 
 # Get subject ID from array task ID
 subject=$SLURM_ARRAY_TASK_ID
