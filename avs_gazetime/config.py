@@ -14,7 +14,7 @@ def configure_run(subject_id=None, ch_type="mag", sensor_selection="fixation", d
     subject = f"as{subject_id:02d}"
     sessions = np.arange(1, 10+1)  # sessions to include
     if debug: 
-        sessions = np.arange(1, 10)
+        sessions = np.arange(1, 2)
     s_freq = 500  # sampling frequency of MEG data in Hz
     if ch_type is None:
         ch_type = "grad"

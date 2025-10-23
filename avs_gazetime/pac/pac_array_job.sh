@@ -31,8 +31,8 @@
 #SBATCH --nodes=1
 #SBATCH --mem=60G # Memory per array task
 #SBATCH -c 10 # Cores per array task
-#SBATCH -p workq
-#SBATCH --job-name=wtpac
+#SBATCH -p klab-cpu
+#SBATCH --job-name=gude
 #SBATCH --error=error_pac_%A_%a.err
 #SBATCH --output=output_pac_%A_%a.out
 #SBATCH --array=0-199 # Default: 200 chunks for memory efficiency (override with --array=0-N)
