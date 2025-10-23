@@ -61,34 +61,35 @@ def boxcar_filter(dynamics, times, cutoff_hz=50):
     print(f"Boxcar filter: {cutoff_hz}Hz → {window_size} samples ({window_size/sfreq*1000:.1f}ms)")
     return uniform_filter1d(dynamics.astype(float), size=window_size, axis=1, mode='nearest')
 
-def prepare_memorability_data(meg_data, meta_df, times, target_col="memorability", 
-                             log_transform=False, clip_outliers_flag=False, 
+def prepare_memorability_data(meg_data, meta_df, times, target_col="memorability",
+                             log_transform=False, clip_outliers_flag=False,
                              clip_std_threshold=3, decim=1):
     """Prepare data for memorability decoding."""
     # Get target values and remove NaNs
     y = meta_df[target_col].values
     groups = meta_df["sceneID"].values
     valid_mask = ~np.isnan(y)
-    
+
     print(f"Target: {target_col}")
     print(f"Valid epochs: {np.sum(valid_mask)}/{len(y)}")
     print(f"Unique scenes: {len(np.unique(groups[valid_mask]))}")
     print(f"Target stats: mean={np.nanmean(y):.3f}, std={np.nanstd(y):.3f}")
-    
+
     # Apply valid mask
     X = meg_data[valid_mask]
     y = y[valid_mask]
     groups = groups[valid_mask]
-    
+    meta_df_filtered = meta_df[valid_mask].reset_index(drop=True)
+
     if LOWPASS_FILTER:
         print(f"Applying boxcar filter with high frequency cutoff at {LOWPASS_FILTER} Hz")
         X = boxcar_filter(X, times, cutoff_hz=LOWPASS_FILTER)
-    
+
     # Apply log transformation if requested
     if log_transform:
         print(f"Applying log transformation to {target_col}")
         y = np.log(y + 1e-10)
-    
+
     # Clip outliers in MEG data if requested
     if clip_outliers_flag:
         print(f"Clipping MEG outliers beyond {clip_std_threshold} std")
@@ -99,20 +100,20 @@ def prepare_memorability_data(meg_data, meta_df, times, target_col="memorability
         else:
             print("Clipping based on standard deviations.")
             X_clipped = clip_outliers(X_clipped, clip_std_threshold, verbose=True)
-                
-         
+
+
         clipped_ratio = np.sum(X != X_clipped) / X.size
         print(f"Clipped {clipped_ratio:.4%} of MEG data points")
         X = X_clipped
-    
+
     # Decimate time dimension
     times_decimated = times[::decim]
     X = X[:, :, ::decim]
-    
+
     print(f"Final data shape: {X.shape}")
     print(f"Decimated times: {len(times_decimated)} points")
-    
-    return X, y, groups, times_decimated
+
+    return X, y, groups, times_decimated, meta_df_filtered
 
 def create_optimized_time_decoder():
     """Create time-decoding pipeline with PCA."""
@@ -205,28 +206,49 @@ def get_cross_validator(groups=None, n_folds=N_FOLDS):
             random_state=42
         )
 
+def fit_and_predict_timeseries(X, y, groups, times, target_col):
+    """Fit decoder at each timepoint and generate predictions."""
+    print(f"Fitting decoders and generating predictions for {target_col}...")
+    print(f"Data shape: {X.shape}")
+
+    # Create time decoder
+    time_decoder = create_optimized_time_decoder()
+
+    # Fit and predict at each timepoint
+    print("Training decoders on full dataset...")
+    time_decoder.fit(X, y)
+
+    # Generate predictions
+    print("Generating predictions...")
+    predictions = time_decoder.predict(X)
+
+    print(f"Predictions shape: {predictions.shape}")
+    print(f"Predictions range: [{np.min(predictions):.3f}, {np.max(predictions):.3f}]")
+
+    return predictions
+
 def run_timepoint_decoder(X, y, groups, times, target_col):
     """Run timepoint decoding with PCA optimization and dummy baseline."""
     from sklearn.dummy import DummyRegressor
-    
+
     print(f"Running time decoding with PCA and dummy baseline...")
     print(f"Data shape: {X.shape}")
     if USE_SCENE_GROUPS:
         print(f"Using scene-based CV with {len(np.unique(groups))} unique scenes")
-    
+
     # Create time decoder
     time_decoder = create_optimized_time_decoder()
-    
+
     # Create dummy baseline decoder
     dummy_decoder = SlidingEstimator(
         DummyRegressor(strategy='mean'),
         scoring='r2',
         n_jobs=N_JOBS
     )
-    
+
     # Get cross-validator
     cv = get_cross_validator(groups)
-    
+
     if USE_SCENE_GROUPS and groups is not None:
         print("Using group-based cross-validation for time decoding")
         # Real decoder scores
@@ -247,7 +269,7 @@ def run_timepoint_decoder(X, y, groups, times, target_col):
         # Convert continuous y to discrete for StratifiedKFold
         y_discrete = pd.qcut(y, q=5, labels=False, duplicates='drop')
         cv_strat = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
-        
+
         # Real decoder scores
         scores = cross_val_multiscore(
             time_decoder, X, y,
@@ -260,18 +282,18 @@ def run_timepoint_decoder(X, y, groups, times, target_col):
             cv=cv_strat,
             n_jobs=-2
         )
-    
+
     # Average across CV folds
     mean_scores = np.mean(scores, axis=0)
     mean_dummy_scores = np.mean(dummy_scores, axis=0)
-    
+
     print(f"Timepoint decoding completed. Max R² = {np.max(mean_scores):.4f}")
     print(f"Dummy baseline completed. Mean R² = {np.mean(mean_dummy_scores):.4f}")
-    
+
     return {
         'times': times,
         'scores': mean_scores,
-        'dummy_scores': mean_dummy_scores,  
+        'dummy_scores': mean_dummy_scores,
         'target_col': target_col,
         'use_scene_groups': USE_SCENE_GROUPS,
         'n_unique_scenes': len(np.unique(groups)),
@@ -489,26 +511,54 @@ def main():
     # Run decoding for each memorability target
     for target_col in MEMORABILITY_TARGETS:
         print(f"\n=== Decoding {target_col} ===")
-        
+
         # Prepare data
-        X, y, groups, times_dec = prepare_memorability_data(
+        X, y, groups, times_dec, meta_df_filtered = prepare_memorability_data(
             meg_data, merged_df, times, target_col=target_col,
             log_transform=LOG_TRANSFORM, clip_outliers_flag=CLIP_OUTLIERS,
             clip_std_threshold=CLIP_STD_THRESHOLD, decim=DECIM
         )
-        
-        
+
+
         # Run timepoint decoding
         print("Running timepoint decoding...")
         tp_results = run_timepoint_decoder(X, y, groups, times_dec, target_col)
-        
+
         # Plot timepoint results
         tp_plot_path = os.path.join(output_dir, f"timepoint_decoding_{target_col}_{SUBJECT_ID}_{CH_TYPE}.png")
         plot_decoder_performance(tp_results, tp_plot_path)
-        
+
         # Save timepoint results
         tp_save_path = os.path.join(output_dir, f"timepoint_results_{target_col}_{SUBJECT_ID}_{CH_TYPE}.npy")
         np.save(tp_save_path, tp_results)
+
+        # Generate predictions for each timepoint
+        print("\nGenerating predictions for regression analysis...")
+        predictions = fit_and_predict_timeseries(X, y, groups, times_dec, target_col)
+
+        # Create long format dataframe
+        print("Creating long format prediction dataframe...")
+        prediction_records = []
+        for trial_idx in range(len(y)):
+            for time_idx, time_val in enumerate(times_dec):
+                prediction_records.append({
+                    'subject': meta_df_filtered.iloc[trial_idx]['subject'],
+                    'session': meta_df_filtered.iloc[trial_idx]['session'],
+                    'trial': meta_df_filtered.iloc[trial_idx]['trial'],
+                    'sceneID': meta_df_filtered.iloc[trial_idx]['sceneID'],
+                    'duration': meta_df_filtered.iloc[trial_idx]['duration'],
+                    'memorability': y[trial_idx],
+                    'meg_time': time_val * 1000,  # Convert to ms
+                    'predicted_memorability': predictions[trial_idx, time_idx]
+                })
+
+        predictions_df = pd.DataFrame(prediction_records)
+
+        # Save predictions
+        pred_save_path = os.path.join(output_dir, f"predicted_memorability_{target_col}_as{SUBJECT_ID:02d}_{CH_TYPE}.csv")
+        predictions_df.to_csv(pred_save_path, index=False)
+        print(f"Saved predictions to {pred_save_path}")
+        print(f"Prediction dataframe shape: {predictions_df.shape}")
         
         # Run temporal generalization if requested
         if TEMPORAL_GENERALIZATION:
