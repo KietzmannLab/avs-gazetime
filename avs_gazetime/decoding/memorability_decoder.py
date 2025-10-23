@@ -465,29 +465,54 @@ def main():
     print("=== MEMORABILITY DECODER WITH PCA ===")
     print(f"PCA enabled: {USE_PCA} (retaining {PCA_VARIANCE_THRESHOLD*100}% variance)")
     print()
-    
+
     print("Loading MEG data and metadata...")
-    
+
     # Load metadata and MEG data
     merged_df = load_data.merge_meta_df(EVENT_TYPE)
     meg_data = load_data.process_meg_data_for_roi(
         CH_TYPE, EVENT_TYPE, SESSIONS, apply_median_scale=APPLY_MEDIAN_SCALE, scale_with_std=True, sensors_to_femto=False)
     times = load_data.read_hd5_timepoints(event_type=EVENT_TYPE)
-    
+
     print(f"Loaded data: {meg_data.shape} epochs, {len(times)} timepoints")
     print(f"Metadata: {len(merged_df)} events")
     print(f"Channel type: {CH_TYPE}")
-    
+
     # Remove outlier durations
     longest_dur = np.percentile(merged_df["duration"], 98)
     shortest_dur = np.percentile(merged_df["duration"], 2)
     dur_mask = (merged_df["duration"] < longest_dur) & (merged_df["duration"] > shortest_dur)
-    
+
     merged_df = merged_df[dur_mask]
     meg_data = meg_data[dur_mask, :, :]
     merged_df.reset_index(drop=True, inplace=True)
-    
+
     print(f"After duration filtering: {meg_data.shape[0]} epochs")
+
+    # Reject extreme epochs based on maximum amplitude (99th percentile)
+    print("\nRejecting extreme epochs...")
+    max_per_epoch = np.max(np.abs(meg_data), axis=(1, 2))
+    threshold = np.percentile(max_per_epoch, 99)
+    good_epochs = max_per_epoch < threshold
+
+    print(f"Rejecting {(~good_epochs).sum()} / {len(good_epochs)} epochs (max amplitude > {threshold:.3f})")
+
+    merged_df = merged_df[good_epochs].reset_index(drop=True)
+    meg_data = meg_data[good_epochs]
+
+    # Reject epochs with low correlation to median ERF (1st percentile)
+    print("\nRejecting epochs with low correlation to median ERF...")
+    median_erf = np.median(meg_data, axis=0)
+    correlations = np.array([np.corrcoef(epoch.flatten(), median_erf.flatten())[0, 1] for epoch in meg_data])
+    correlation_threshold = np.percentile(correlations, 1)
+    good_epochs = correlations > correlation_threshold
+
+    print(f"Rejecting {(~good_epochs).sum()} / {len(good_epochs)} epochs (correlation < {correlation_threshold:.3f})")
+
+    merged_df = merged_df[good_epochs].reset_index(drop=True)
+    meg_data = meg_data[good_epochs]
+
+    print(f"After outlier rejection: {meg_data.shape[0]} epochs")
     
     # Add memorability scores
     print("Loading memorability scores...")
