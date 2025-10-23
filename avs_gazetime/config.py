@@ -77,7 +77,7 @@ try:
     print(f"subject_id: {subject_id}")
     debug = False
 except KeyError:
-    subject_id = 4
+    subject_id = 1
     print("subject_id not found in environment variables")
     # set sebug to True
     debug = True
@@ -85,7 +85,7 @@ try:
     ch_type = os.environ["CH_TYPE_GAZETIME"]
     print(f"ch_type: {ch_type}")
 except KeyError:
-    ch_type = "mag" # TODO: make None again
+    ch_type = "early" # TODO: make None again
     print("ch_type not found in environment variables")
 
 try:

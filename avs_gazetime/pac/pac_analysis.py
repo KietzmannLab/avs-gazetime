@@ -139,7 +139,7 @@ def main():
             split_str = f"_memsplit_{MEM_SPLIT.replace('/', '-')}"
 
         offset_str = "_offset" if OFFSET_LOCKED else ""
-        base_fname = f"pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{split_str}{offset_str}"
+        base_fname = f"pac_results_{SUBJECT_ID}_{CH_TYPE}_{EVENT_TYPE}_{theta_band[0]}-{theta_band[1]}_{gamma_band[0]}-{gamma_band[1]}_{time_window[0]}-{time_window[1]}_{remove_erfs}_{surrogate_style}{split_str}{offset_str}_cleaned"
 
         # Final aggregated CSV filename
         pac_fname = f"{PLOTS_DIR}/{base_fname}.csv"
