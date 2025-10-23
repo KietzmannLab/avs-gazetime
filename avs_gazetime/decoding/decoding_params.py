@@ -30,7 +30,7 @@ SCALER = "robust"
 LOWPASS_FILTER = False # boxcar filter at 30Hz
 
 # Temporal generalization settings
-TEMPORAL_GENERALIZATION = True
+TEMPORAL_GENERALIZATION = False
 TG_DECIM = 5  # Additional decimation for temporal generalization
 
 # Optimization parameters
