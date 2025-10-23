@@ -22,7 +22,7 @@ eval "$(conda shell.bash hook)"
 conda activate avs
 
 # Channel types to process
-ch_types="mag"
+ch_types="ventral"
 
 # Base paths
 gazetime_path="/home/student/p/psulewski/avs-gazetime/avs_gazetime"
