@@ -207,23 +207,49 @@ def get_cross_validator(groups=None, n_folds=N_FOLDS):
         )
 
 def fit_and_predict_timeseries(X, y, groups, times, target_col):
-    """Fit decoder at each timepoint and generate predictions."""
-    print(f"Fitting decoders and generating predictions for {target_col}...")
+    """Generate out-of-fold predictions using cross-validation."""
+    from sklearn.model_selection import cross_val_predict
+
+    print(f"Generating cross-validated predictions for {target_col}...")
     print(f"Data shape: {X.shape}")
 
     # Create time decoder
     time_decoder = create_optimized_time_decoder()
 
-    # Fit and predict at each timepoint
-    print("Training decoders on full dataset...")
-    time_decoder.fit(X, y)
+    # Get cross-validator
+    cv = get_cross_validator(groups)
 
-    # Generate predictions
-    print("Generating predictions...")
-    predictions = time_decoder.predict(X)
+    # Generate out-of-fold predictions using cross-validation
+    print("Generating out-of-fold predictions via cross-validation...")
+    print("Each sample predicted by model trained on OTHER folds (no data leakage)")
+
+    if USE_SCENE_GROUPS and groups is not None:
+        print("Using scene-based cross-validation for predictions")
+        predictions = cross_val_predict(
+            time_decoder, X, y,
+            cv=cv,
+            groups=groups,
+            n_jobs=-2
+        )
+    else:
+        # Use stratified k-fold
+        cv_strat = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
+        predictions = cross_val_predict(
+            time_decoder, X, y,
+            cv=cv_strat,
+            n_jobs=-2
+        )
 
     print(f"Predictions shape: {predictions.shape}")
     print(f"Predictions range: [{np.min(predictions):.3f}, {np.max(predictions):.3f}]")
+
+    # Compute correlation with true values for sanity check
+    from scipy.stats import pearsonr
+    r_per_time = []
+    for t_idx in range(predictions.shape[1]):
+        r, _ = pearsonr(predictions[:, t_idx], y)
+        r_per_time.append(r)
+    print(f"Peak prediction correlation with true values: r={np.max(r_per_time):.3f} at timepoint {times[np.argmax(r_per_time)]:.3f}s")
 
     return predictions
 
