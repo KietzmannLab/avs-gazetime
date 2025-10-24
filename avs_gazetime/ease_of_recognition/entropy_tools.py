@@ -105,7 +105,8 @@ def load_network_activations(subject_id, crop_size_pix, model_name="resnet50_eco
 
 
 def get_entropy_scores(metadata_df, subject_id, targets, crop_size_pix=100,
-                       model_name="resnet50_ecoset_crop", module_name="fc"):
+                       model_name="resnet50_ecoset_crop", module_name="fc",
+                       log_entropy=True):
     """
     Add classification entropy scores to metadata dataframe.
 
@@ -123,6 +124,8 @@ def get_entropy_scores(metadata_df, subject_id, targets, crop_size_pix=100,
         Name of the neural network model
     module_name : str
         Name of the module/layer
+    log_entropy : bool
+        Whether to log-transform entropy values (matches behavioral analysis)
 
     Returns:
     --------
@@ -138,6 +141,12 @@ def get_entropy_scores(metadata_df, subject_id, targets, crop_size_pix=100,
 
     # Compute classification entropy
     entropy_scores = classification_entropy(features)
+
+    # Apply log transformation if requested (matches behavioral analysis)
+    if log_entropy:
+        entropy_scores = np.log(entropy_scores)
+        print(f"Applied log transformation to entropy scores")
+
     filenames_df["entropy_raw"] = entropy_scores
     print(metadata_df.head())
     # Merge with metadata using crop_filename

@@ -511,12 +511,13 @@ def main():
 
     print(f"After outlier rejection: {meg_data.shape[0]} epochs")
 
-    # Add entropy scores
+    # Add entropy scores (with log transformation matching behavioral analysis)
     print("Loading entropy scores...")
-    
+
     merged_df = get_entropy_scores(
         merged_df, SUBJECT_ID, ENTROPY_TARGETS,
-        crop_size_pix=CROP_SIZE_PIX
+        crop_size_pix=CROP_SIZE_PIX,
+        log_entropy=True  # Match behavioral analysis preprocessing
     )
 
     # Remove epochs without entropy scores
@@ -525,7 +526,20 @@ def main():
     meg_data = meg_data[valid_entropy_mask]
     merged_df.reset_index(drop=True, inplace=True)
 
-    print(f"After entropy filtering: {meg_data.shape[0]} epochs")
+    print(f"After NaN filtering: {meg_data.shape[0]} epochs")
+
+    # Remove entropy outliers (matching behavioral analysis: 2nd-98th percentile)
+    print("\nRemoving entropy outliers (2nd-98th percentile)...")
+    lower_entropy = np.percentile(merged_df["entropy_raw"], 2)
+    upper_entropy = np.percentile(merged_df["entropy_raw"], 98)
+    entropy_outlier_mask = (merged_df["entropy_raw"] >= lower_entropy) & (merged_df["entropy_raw"] <= upper_entropy)
+
+    print(f"Rejecting {(~entropy_outlier_mask).sum()} / {len(entropy_outlier_mask)} epochs (entropy outliers)")
+
+    merged_df = merged_df[entropy_outlier_mask].reset_index(drop=True)
+    meg_data = meg_data[entropy_outlier_mask]
+
+    print(f"After entropy outlier filtering: {meg_data.shape[0]} epochs")
 
     # Create output directory
     output_dir = os.path.join(PLOTS_DIR, "entropy_decoder")

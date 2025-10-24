@@ -558,29 +558,30 @@ def main():
     # Add memorability scores
     print("Loading memorability scores...")
     merged_df = get_memorability_scores(
-        merged_df, SUBJECT_ID, MEMORABILITY_TARGETS, MODEL_TASK, 
+        merged_df, SUBJECT_ID, MEMORABILITY_TARGETS, MODEL_TASK,
         crop_size_pix=CROP_SIZE_PIX
     )
-    
-    # Remove epochs without memorability scores
-    valid_mem_mask = ~merged_df["memorability"].isna()
-    merged_df = merged_df[valid_mem_mask]
-    meg_data = meg_data[valid_mem_mask]
-    merged_df.reset_index(drop=True, inplace=True)
-    
-    print(f"After memorability filtering: {meg_data.shape[0]} epochs")
-    
+
+    print(f"After memorability loading: {meg_data.shape[0]} epochs")
+
     # Create output directory
     output_dir = os.path.join(PLOTS_DIR, "memorability_decoder")
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Run decoding for each memorability target
     for target_col in MEMORABILITY_TARGETS:
         print(f"\n=== Decoding {target_col} ===")
 
+        # Remove epochs without this specific target's scores
+        valid_mem_mask = ~merged_df[target_col].isna()
+        merged_df_target = merged_df[valid_mem_mask].reset_index(drop=True)
+        meg_data_target = meg_data[valid_mem_mask]
+
+        print(f"After {target_col} filtering: {meg_data_target.shape[0]} epochs")
+
         # Prepare data
         X, y, groups, times_dec, meta_df_filtered = prepare_memorability_data(
-            meg_data, merged_df, times, target_col=target_col,
+            meg_data_target, merged_df_target, times, target_col=target_col,
             log_transform=LOG_TRANSFORM, clip_outliers_flag=CLIP_OUTLIERS,
             clip_std_threshold=CLIP_STD_THRESHOLD, decim=DECIM
         )
