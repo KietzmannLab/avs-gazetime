@@ -45,7 +45,7 @@ window_duration = (TIME_WINDOW[1] - TIME_WINDOW[0]) *1000  # in ms
 print(f"PAC window duration: {window_duration} ms")
 post_fixation_extension = 75  # 75ms post-fixation extension
 sfreq = S_FREQ
-ch_type = "parietal"  # Use mag for fast loading
+ch_type = "early"  # Use mag for fast loading
 
  
 # Load MEG data (just first 2 sessions for illustration)
@@ -56,7 +56,7 @@ print(f"{'='*70}")
 meg_data, merged_df, times = load_meg_data(
     event_type=EVENT_TYPE,
     ch_type=ch_type,
-    sessions=SESSIONS[:2],  # Just first 2 sessions
+    sessions=SESSIONS,  # Just first 2 sessions
     channel_idx=None,
     remove_erfs=remove_erfs,
 )
@@ -142,7 +142,7 @@ split_idx_1 = np.where(sorted_labels >= 1)[0][0] if np.any(sorted_labels >= 1) e
 split_idx_2 = np.where(sorted_labels >= 2)[0][0] if np.any(sorted_labels >= 2) else len(sorted_durations)
 
 # Subsample for visualization if too many epochs
-n_epochs_to_show = min(1500, len(sorted_durations))
+n_epochs_to_show = min(1000, len(sorted_durations))
 if len(sorted_durations) > n_epochs_to_show:
     subsample_indices = np.linspace(0, len(sorted_durations)-1, n_epochs_to_show, dtype=int)
     sorted_durations = sorted_durations[subsample_indices]
@@ -159,7 +159,7 @@ print("Creating visualization...")
 print(f"{'='*70}")
 # context poster
 sns.set_context("poster")
-fig, ax1 = plt.subplots(1, 1, figsize=(8,10))
+fig, ax1 = plt.subplots(1, 1, figsize=(5,6))
 
 # ============================================================================
 # Panel 1: Offset-locked window selection with heatmap-style visualization
@@ -236,31 +236,32 @@ for i, duration in enumerate(sorted_durations):
     # remove y tickslabels
     ax1.set_yticks([])
 
-    # Mark fixation end with vertical line
-    ax1.plot([duration_clipped, duration_clipped], [i-0.5, i+0.5],
-             color='darkblue', alpha=0.6)
 
+# plot the durations
+ax1.plot(sorted_durations, np.arange(n_epochs), color='white', linestyle='--', alpha=0.8, zorder=5)
 # Add horizontal lines separating groups
-ax1.axhline(y=split_idx_1-0.5, color='black' ,linestyle='--', alpha=0.5, zorder=10)
-ax1.axhline(y=split_idx_2-0.5, color='black' ,linestyle='--', alpha=0.5, zorder=10)
+#ax1.axhline(y=split_idx_1-0.5, color='black' ,linestyle='--', alpha=0.5, zorder=10)
+ax1.axhline(y=split_idx_2-0.5, color='grey' ,linestyle='-', alpha=0.5, zorder=10)
 
-ax1.set_xlabel('time from fixation onset [s]')
-ax1.set_ylabel('fixation epochs\n[sorted by duration]')
-ax1.set_title('offset-locked PAC windows', pad=15)
+ax1.set_xlabel('time [ms]')
+ax1.set_ylabel('fixation duration')
+#ax1.set_title('offset-locked PAC windows', pad=15)
 
-
-ax1.set_xlim(-50, 450)
+# despine
+sns.despine(ax=ax1, top=True, right=True, left=False, bottom=False)
+# set xticks
+ax1.set_xlim(-100, 500)
 ax1.set_ylim(-1, n_epochs)
 
 # Add fixation onset line
-ax1.axvline(x=0, color='black', linestyle='-', alpha=0.7, label='fixation onset')
+ax1.axvline(x=0, color='white', linestyle=':', alpha=0.8, label='fixation onset')
 
 # Add legend for PAC window components
 from matplotlib.patches import Patch
 
 
 # make horizontal lines for (i) max duration, (ii) min duration with extension
-ax1.axvline(x=DURATION_SPLIT, color='black', linestyle='--', alpha=0.7, linewidth=2, label='duration split threshold')
+#ax1.axvline(x=DURATION_SPLIT, color='black', linestyle='--', alpha=0.7, linewidth=2, label='duration split threshold')
 #ax1.axvline(x=window_duration - post_fixation_extension, color='brown', linestyle='-.', alpha=0.7, linewidth=2, label='Min duration for PAC')
 
 legend_elements = [
@@ -272,7 +273,7 @@ legend_elements = [
     
 ]
     
-ax1.legend(handles=legend_elements, frameon=False, loc="lower right")
+#ax1.legend(handles=legend_elements, frameon=False, loc="lower right")
 
 
 # save figure

@@ -76,7 +76,7 @@ occipital_mag_sensors = [
 
 
 def plot_heatmap(meg_data, offsets, times, output_dir, event_type, subject, channel, binned=True, band_name="", tlims=(-0.2, 0.500), 
-                 pac_box=True, pac_box_params={"tmin": 0.15, "tmax": 0.4}):
+                 pac_box=False, pac_box_params={"tmin": 0.15, "tmax": 0.4}, remove_erfs=[]):
     """
     Plot the heatmap for the population code across sessions. 
     The data can be pre-binned (duration quantiles) or not.
@@ -89,7 +89,7 @@ def plot_heatmap(meg_data, offsets, times, output_dir, event_type, subject, chan
     # if binned:
     #     meg_data = (meg_data - np.nanmean(meg_data)) / np.nanstd(meg_data)
         
-    fig, ax = plt.subplots(1, 1, figsize=(8, 8), dpi=300)
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6), dpi=300)
     cbar_label = band_name
 
     # if band_name != "raw" or band_name != "PAC":
@@ -119,7 +119,10 @@ def plot_heatmap(meg_data, offsets, times, output_dir, event_type, subject, chan
         
                 
         else:
-            cbar_label = "residual activation [fT]"
+            if len(remove_erfs) > 0:
+                cbar_label = "residual activation [a.u.]"
+            else:
+                cbar_label = "activation [a.u.]"
             cmap = "icefire"
             vmin = np.percentile(meg_data, 0.01)
             vmax = np.percentile(meg_data, 99.99)
@@ -179,11 +182,15 @@ def plot_heatmap(meg_data, offsets, times, output_dir, event_type, subject, chan
     fname = f"epoch_heatmap_{event_type}_{subject}_{CH_TYPE}_{channel}_binned_{binned}_{band_name}"
     if PHASE_OR_POWER == "phase":
         fname = fname + "_phase"
+    if len(remove_erfs) > 0:
+        fname = fname + f"_residuals_{'_'.join(remove_erfs)}"
     # plot the offsets
     
     fig.savefig(os.path.join(output_dir, "heatmaps", fname + ".png"), transparent=False)
     #fig.savefig(os.path.join(output_dir, "heatmaps", fname + ".pdf"))
     print("Saved figure to", os.path.join(output_dir, "heatmaps", fname + ".png"))
+    # save as pdf
+    fig.savefig(os.path.join(output_dir, "heatmaps", fname + ".pdf"), transparent=False)
     return
 
 def freq_avg(data, method, axis=0):
@@ -456,9 +463,9 @@ if __name__ == "__main__":
             for area, channel_sel in zip(areas, channels):
                 for channel in tqdm(channel_sel, desc=f"Channels in {area}"):
                     print(f"Processing channel {channel}", area)
-            
                     
-                    plot_heatmap(meg_data=meg_data_band, times=times_band, channel=channel, output_dir=PLOTS_DIR, event_type=EVENT_TYPE, subject=SUBJECT_ID , band_name=band_name, offsets=durantions_per_quantile)
+                    plot_heatmap(meg_data=meg_data_band, times=times_band, channel=channel, output_dir=PLOTS_DIR, event_type=EVENT_TYPE, subject=SUBJECT_ID , band_name=band_name,
+                                 offsets=durantions_per_quantile, remove_erfs=remove_erfs)
                     
 
 

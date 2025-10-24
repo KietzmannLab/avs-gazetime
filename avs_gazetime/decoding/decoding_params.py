@@ -13,7 +13,7 @@ N_FOLDS = 5
 N_JOBS = -2
 
 # Memorability parameters
-MEMORABILITY_TARGETS = [ "memorability","mem_relative",]
+MEMORABILITY_TARGETS = [ "mem_relative",] #"memorability"
 CROP_SIZE_PIX = 100  # Use 100px memorability estimates
 MODEL_TASK = "regression"  # Use regression for continuous memorability scores
 

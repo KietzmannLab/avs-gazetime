@@ -85,7 +85,7 @@ try:
     ch_type = os.environ["CH_TYPE_GAZETIME"]
     print(f"ch_type: {ch_type}")
 except KeyError:
-    ch_type = "mag" # TODO: make None again
+    ch_type = "grad" # TODO: make None again
     print("ch_type not found in environment variables")
 
 try:
