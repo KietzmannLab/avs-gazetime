@@ -80,7 +80,7 @@ def compute_correlation_over_time(predictions_df):
     return pd.DataFrame(results)
 
 
-def plot_correlation_over_time(corr_df, output_dir, target_col):
+def plot_correlation_over_time(corr_df, output_dir, target_col, ch_type):
     """Plot correlation between predicted memorability and duration over MEG time."""
     sns.set_context("poster")
     sns.set_palette("colorblind")
@@ -149,7 +149,7 @@ def plot_correlation_over_time(corr_df, output_dir, target_col):
     plt.tight_layout()
     sns.despine()
 
-    save_path = os.path.join(output_dir, f"prediction_duration_correlation_{target_col}.pdf")
+    save_path = os.path.join(output_dir, f"prediction_duration_correlation_{target_col}_{ch_type}.pdf")
     plt.savefig(save_path)
     print(f"Saved correlation plot to {save_path}")
     plt.close()
@@ -170,7 +170,7 @@ def find_peak_timepoint_per_subject(corr_df):
     return peak_times
 
 
-def plot_quartile_analysis(predictions_df, corr_df, output_dir, target_col):
+def plot_quartile_analysis(predictions_df, corr_df, output_dir, target_col, ch_type):
     """Plot duration by memorability quartile at peak timepoint per subject."""
     sns.set_context("poster")
     sns.set_palette("colorblind")
@@ -315,13 +315,14 @@ def main():
     # Set plotting style
     sns.set_context("poster")
     sns.set_palette("colorblind")
+    ch_type = "grad"
 
     # Process each memorability target
     for target_col in MEMORABILITY_TARGETS:
         print(f"\n=== Processing {target_col} ===")
 
         # Load prediction data
-        predictions_df = load_prediction_data(SUBJECTS, target_col)
+        predictions_df = load_prediction_data(SUBJECTS, target_col, ch_type=ch_type)
 
         # Create output directory
         output_dir = os.path.join(PLOTS_DIR_NO_SUB, "memorability_decoder", "predictions")
@@ -333,11 +334,11 @@ def main():
 
         # Plot correlation over time
         print("Plotting correlation over time...")
-        grand_avg = plot_correlation_over_time(corr_df, output_dir, target_col)
+        grand_avg = plot_correlation_over_time(corr_df, output_dir, target_col, ch_type=ch_type)
 
         # Plot quartile analysis at peak timepoint
         print("Plotting quartile analysis at peak timepoint...")
-        plot_quartile_analysis(predictions_df, corr_df, output_dir, target_col)
+        plot_quartile_analysis(predictions_df, corr_df, output_dir, target_col, ch_type=ch_type)
 
     print(f"\n=== Analysis complete! ===")
     print(f"Results saved to: {output_dir}")

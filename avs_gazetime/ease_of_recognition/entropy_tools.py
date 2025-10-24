@@ -139,15 +139,25 @@ def get_entropy_scores(metadata_df, subject_id, targets, crop_size_pix=100,
     # Compute classification entropy
     entropy_scores = classification_entropy(features)
     filenames_df["entropy_raw"] = entropy_scores
-
+    print(metadata_df.head())
     # Merge with metadata using crop_filename
-    metadata_df = pd.merge(
-        metadata_df,
-        filenames_df[["full_filename", "entropy_raw"]],
-        how="left",
-        left_on="crop_filename",
-        right_on="full_filename"
+    print("example filenames_df:")
+    print(filenames_df.head())
+    #01_0001_00_0011299.png 
+    if "crop_filename" not in metadata_df.columns:
+        #reconstruct crop_filename from other columns
+        metadata_df["crop_filename"] = metadata_df.apply(
+            lambda row: f"{row['subject']:02d}_{int(row['trial']):04d}_{int(row['fix_sequence']):02d}_{int(row['sceneID']):07d}.png",
+            axis=1
+        )
+        print("Reconstructed crop_filename column in metadata_df.")
+        print(metadata_df.head())
+    metadata_df = metadata_df.merge(filenames_df[["full_filename", "entropy_raw"]],
+                                    left_on="crop_filename", right_on="full_filename",
+                                    how="left"  
     )
+    print("Merged metadata with entropy scores.")
+    print(metadata_df.head())
 
     # Add requested targets
     for target in targets:
@@ -164,7 +174,7 @@ def get_entropy_scores(metadata_df, subject_id, targets, crop_size_pix=100,
             )
 
     # Clean up temporary columns
-    metadata_df = metadata_df.drop(columns=["full_filename"], errors="ignore")
+    #metadata_df = metadata_df.drop(columns=["full_filename"], errors="ignore")
 
     print(f"Added entropy scores. Available targets: {targets}")
     print(f"Missing entropy scores: {metadata_df['entropy_raw'].isna().sum()}/{len(metadata_df)}")
