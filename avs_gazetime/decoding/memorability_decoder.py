@@ -192,17 +192,32 @@ def create_optimized_temporal_generalization():
     
     return time_gen
 
-def get_cross_validator(groups=None, n_folds=N_FOLDS):
-    """Get appropriate cross-validator."""
+def get_cross_validator(groups=None, n_folds=N_FOLDS, for_prediction=False):
+    """Get appropriate cross-validator.
+
+    Parameters:
+    -----------
+    groups : array-like
+        Group labels for samples
+    n_folds : int
+        Number of folds
+    for_prediction : bool
+        If True, use partitioning CV (GroupKFold) required for cross_val_predict.
+        If False, use shuffling CV (GroupShuffleSplit) for scoring.
+    """
     if groups is not None and USE_SCENE_GROUPS:
-        return GroupShuffleSplit(
-            n_splits=n_folds, 
-            random_state=42
-        )
+        if for_prediction:
+            from sklearn.model_selection import GroupKFold
+            return GroupKFold(n_splits=n_folds)
+        else:
+            return GroupShuffleSplit(
+                n_splits=n_folds,
+                random_state=42
+            )
     else:
         return StratifiedKFold(
-            n_splits=n_folds, 
-            shuffle=True, 
+            n_splits=n_folds,
+            shuffle=True,
             random_state=42
         )
 
@@ -216,8 +231,8 @@ def fit_and_predict_timeseries(X, y, groups, times, target_col):
     # Create time decoder
     time_decoder = create_optimized_time_decoder()
 
-    # Get cross-validator
-    cv = get_cross_validator(groups)
+    # Get cross-validator (use partitioning version for predictions)
+    cv = get_cross_validator(groups, for_prediction=True)
 
     # Generate out-of-fold predictions using cross-validation
     print("Generating out-of-fold predictions via cross-validation...")
