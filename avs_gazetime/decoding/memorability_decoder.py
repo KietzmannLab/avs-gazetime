@@ -603,23 +603,32 @@ def main():
         print("\nGenerating predictions for regression analysis...")
         predictions = fit_and_predict_timeseries(X, y, groups, times_dec, target_col)
 
-        # Create long format dataframe
+        # Create long format dataframe (vectorized for speed)
         print("Creating long format prediction dataframe...")
-        prediction_records = []
-        for trial_idx in range(len(y)):
-            for time_idx, time_val in enumerate(times_dec):
-                prediction_records.append({
-                    'subject': meta_df_filtered.iloc[trial_idx]['subject'],
-                    'session': meta_df_filtered.iloc[trial_idx]['session'],
-                    'trial': meta_df_filtered.iloc[trial_idx]['trial'],
-                    'sceneID': meta_df_filtered.iloc[trial_idx]['sceneID'],
-                    'duration': meta_df_filtered.iloc[trial_idx]['duration'],
-                    'memorability': y[trial_idx],
-                    'meg_time': time_val * 1000,  # Convert to ms
-                    'predicted_memorability': predictions[trial_idx, time_idx]
-                })
+        n_trials = len(y)
+        n_times = len(times_dec)
 
-        predictions_df = pd.DataFrame(prediction_records)
+        # Repeat metadata for all timepoints
+        metadata_repeated = meta_df_filtered.loc[meta_df_filtered.index.repeat(n_times)].reset_index(drop=True)
+
+        # Create meg_time array (tile times for all trials)
+        meg_times_array = np.tile(times_dec * 1000, n_trials)
+
+        # Flatten predictions and repeat target values
+        predictions_flat = predictions.flatten()
+        y_repeated = np.repeat(y, n_times)
+
+        # Build dataframe directly (vectorized - much faster)
+        predictions_df = pd.DataFrame({
+            'subject': metadata_repeated['subject'].values,
+            'session': metadata_repeated['session'].values,
+            'trial': metadata_repeated['trial'].values,
+            'sceneID': metadata_repeated['sceneID'].values,
+            'duration': metadata_repeated['duration'].values,
+            'memorability': y_repeated,
+            'meg_time': meg_times_array,
+            'predicted_memorability': predictions_flat
+        })
 
         # Save predictions
         pred_save_path = os.path.join(output_dir, f"predicted_memorability_{target_col}_as{SUBJECT_ID:02d}_{CH_TYPE}.csv")
