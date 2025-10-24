@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH --time=24:00:00
+#SBATCH --time=3:00:00
 #SBATCH --nodes=1
 #SBATCH --mem=450G
-#SBATCH --cpus-per-task=20
+#SBATCH --cpus-per-task=40
 
 #SBATCH -p klab-cpu
 #SBATCH --job-name=memdecode
@@ -22,7 +22,7 @@ eval "$(conda shell.bash hook)"
 conda activate avs
 
 # Channel types to process
-ch_types="ventral"
+ch_types="grad"
 
 # Base paths
 gazetime_path="/home/student/p/psulewski/avs-gazetime/avs_gazetime"

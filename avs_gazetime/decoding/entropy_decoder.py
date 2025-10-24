@@ -513,6 +513,7 @@ def main():
 
     # Add entropy scores
     print("Loading entropy scores...")
+    
     merged_df = get_entropy_scores(
         merged_df, SUBJECT_ID, ENTROPY_TARGETS,
         crop_size_pix=CROP_SIZE_PIX

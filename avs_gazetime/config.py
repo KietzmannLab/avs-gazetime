@@ -77,7 +77,7 @@ try:
     print(f"subject_id: {subject_id}")
     debug = False
 except KeyError:
-    subject_id = 1
+    subject_id = 4
     print("subject_id not found in environment variables")
     # set sebug to True
     debug = True
